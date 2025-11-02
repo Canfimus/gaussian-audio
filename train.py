@@ -6,13 +6,14 @@ import yaml
 import numpy as np
 import torch
 import sys
-from PIL import Image
+# from PIL import Image # <-- CHANGE: No longer needed for loading
 import torch.nn.functional as F
 from pytorch_msssim import ms_ssim
 from utils import *
 from tqdm import tqdm
 import random
 import torchvision.transforms as transforms
+import glob # <-- ADDED: To find all .npy files
 
 class SimpleTrainer2d:
     """Trains random 2d gaussians to fit an image."""
@@ -26,7 +27,7 @@ class SimpleTrainer2d:
         args = None,
     ):
         self.device = torch.device("cuda:0")
-        self.gt_image = image_path_to_tensor(image_path).to(self.device)
+        self.gt_image = image_path_to_tensor(image_path).to(self.device) # <-- CHANGE: This now calls our new .npy loader
 
         self.num_points = num_points
         image_path = Path(image_path)
@@ -38,16 +39,18 @@ class SimpleTrainer2d:
         self.log_dir = Path(f"./checkpoints/{args.data_name}/{model_name}_{args.iterations}_{num_points}/{self.image_name}")
         
         if model_name == "GaussianImage_Cholesky":
-            from gaussianimage_cholesky import GaussianImage_Cholesky
+            from gaussianimage_audio_v2 import GaussianImage_Cholesky # <-- CHANGE: Import our modified model
             self.gaussian_model = GaussianImage_Cholesky(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W, 
                 device=self.device, lr=args.lr, quantize=False).to(self.device)
 
         elif model_name == "GaussianImage_RS":
+            # (Original code, unchanged)
             from gaussianimage_rs import GaussianImage_RS
             self.gaussian_model = GaussianImage_RS(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W, 
                 device=self.device, lr=args.lr, quantize=False).to(self.device) 
 
         elif model_name == "3DGS":
+            # (Original code, unchanged)
             from gaussiansplatting_3d import Gaussian3D
             self.gaussian_model = Gaussian3D(loss_type="Fusion2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W, 
                 device=self.device, sh_degree=args.sh_degree, lr=args.lr).to(self.device)
@@ -74,6 +77,7 @@ class SimpleTrainer2d:
             iter_list.append(iter)
             with torch.no_grad():
                 if iter % 10 == 0:
+                    # NOTE: PSNR is not a reliable metric here, but loss is.
                     progress_bar.set_postfix({f"Loss":f"{loss.item():.{7}f}", "PSNR":f"{psnr:.{4}f},"})
                     progress_bar.update(10)
         end_time = time.time() - start_time
@@ -97,21 +101,53 @@ class SimpleTrainer2d:
         with torch.no_grad():
             out = self.gaussian_model()
         mse_loss = F.mse_loss(out["render"].float(), self.gt_image.float())
-        psnr = 10 * math.log10(1.0 / mse_loss.item())
-        ms_ssim_value = ms_ssim(out["render"].float(), self.gt_image.float(), data_range=1, size_average=True).item()
+        psnr = 10 * math.log10(1.0 / mse_loss.item()) # NOTE: PSNR is not reliable.
+        
+        # WARNING: ms_ssim will likely FAIL or give incorrect results for 2-channel, non-normalized data.
+        # It's better to rely on MSE/L2 loss as the primary metric.
+        try:
+            ms_ssim_value = ms_ssim(out["render"].float(), self.gt_image.float(), data_range=1, size_average=True).item()
+        except:
+            ms_ssim_value = 0.0 # Set to 0 if it fails
+            
         self.logwriter.write("Test PSNR:{:.4f}, MS_SSIM:{:.6f}".format(psnr, ms_ssim_value))
+        
+        # --- CHANGE: Save output as .npy instead of .png ---
         if self.save_imgs:
-            transform = transforms.ToPILImage()
-            img = transform(out["render"].float().squeeze(0))
-            name = self.image_name + "_fitting.png" 
-            img.save(str(self.log_dir / name))
+            # 1. Get tensor, remove batch dim, move to CPU
+            output_tensor = out["render"].float().squeeze(0).cpu() # Shape: [2, H, W]
+            # 2. Permute back to (H, W, 2) for easier analysis
+            output_tensor = output_tensor.permute(1, 2, 0) # Shape: [H, W, 2]
+            # 3. Convert to NumPy array
+            output_numpy = output_tensor.numpy()
+            # 4. Save as .npy file
+            name = self.image_name + "_fitting.npy" 
+            np.save(str(self.log_dir / name), output_numpy)
+            
         return psnr, ms_ssim_value
 
+# --- CHANGE: Replaced entire function to load .npy files ---
 def image_path_to_tensor(image_path: Path):
-    img = Image.open(image_path)
-    transform = transforms.ToTensor()
-    img_tensor = transform(img).unsqueeze(0) #[1, C, H, W]
+    """
+    Loads a spectrogram from a .npy file.
+    Expected .npy file shape: (H, W, 2)
+    Output tensor shape: (1, 2, H, W)
+    """
+    # 1. Load the numpy file
+    spec_data = np.load(image_path)
+    
+    # 2. Convert to PyTorch tensor
+    #    Expected shape: (H, W, 2)
+    img_tensor = torch.from_numpy(spec_data).float()
+    
+    # 3. Permute dimensions to match model input: (C, H, W)
+    #    (H, W, C) -> (C, H, W)
+    img_tensor = img_tensor.permute(2, 0, 1)
+    
+    # 4. Add batch dimension: (1, C, H, W)
+    img_tensor = img_tensor.unsqueeze(0) # [1, 2, H, W]
     return img_tensor
+# --- End of function change ---
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(description="Example training script.")
@@ -121,6 +157,7 @@ def parse_args(argv):
     parser.add_argument(
         "--data_name", type=str, default='kodak', help="Training dataset"
     )
+    # ... (rest of args are fine) ...
     parser.add_argument(
         "--iterations", type=int, default=50000, help="number of training epochs (default: %(default)s)"
     )
@@ -150,7 +187,6 @@ def parse_args(argv):
 
 def main(argv):
     args = parse_args(argv)
-    # Cache the args as a text string to save them in the output dir later
     args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
 
     if args.seed is not None:
@@ -164,16 +200,21 @@ def main(argv):
     logwriter = LogWriter(Path(f"./checkpoints/{args.data_name}/{args.model_name}_{args.iterations}_{args.num_points}"))
     psnrs, ms_ssims, training_times, eval_times, eval_fpses = [], [], [], [], []
     image_h, image_w = 0, 0
-    if args.data_name == "kodak":
-        image_length, start = 24, 0
-    elif args.data_name == "DIV2K_valid_LRX2":
-        image_length, start = 100, 800
-    for i in range(start, start+image_length):
-        if args.data_name == "kodak":
-            image_path = Path(args.dataset) / f'kodim{i+1:02}.png'
-        elif args.data_name == "DIV2K_valid_LRX2":
-            image_path = Path(args.dataset) /  f'{i+1:04}x2.png'
 
+    # --- CHANGE: Simplified the data loading loop to find all .npy files ---
+    #    The old loop was hardcoded for kodak/DIV2K file names.
+    #    This now finds all files ending in .npy in the provided dataset directory.
+    print(f"Searching for .npy files in: {args.dataset}")
+    image_paths = sorted(glob.glob(os.path.join(args.dataset, '*.npy')))
+    print(f"Found {len(image_paths)} files.")
+    
+    if len(image_paths) == 0:
+        print(f"Error: No .npy files found in {args.dataset}. Did you run preprocess.py?")
+        return
+
+    for image_path in image_paths:
+        image_path = Path(image_path) # Convert string to Path object
+        
         trainer = SimpleTrainer2d(image_path=image_path, num_points=args.num_points, 
             iterations=args.iterations, model_name=args.model_name, args=args, model_path=args.model_path)
         psnr, ms_ssim, training_time, eval_time, eval_fps = trainer.train()
@@ -187,17 +228,21 @@ def main(argv):
         image_name = image_path.stem
         logwriter.write("{}: {}x{}, PSNR:{:.4f}, MS-SSIM:{:.4f}, Training:{:.4f}s, Eval:{:.8f}s, FPS:{:.4f}".format(
             image_name, trainer.H, trainer.W, psnr, ms_ssim, training_time, eval_time, eval_fps))
+    # --- End of loop change ---
 
-    avg_psnr = torch.tensor(psnrs).mean().item()
-    avg_ms_ssim = torch.tensor(ms_ssims).mean().item()
-    avg_training_time = torch.tensor(training_times).mean().item()
-    avg_eval_time = torch.tensor(eval_times).mean().item()
-    avg_eval_fps = torch.tensor(eval_fpses).mean().item()
-    avg_h = image_h//image_length
-    avg_w = image_w//image_length
+    if len(image_paths) > 0:
+        avg_psnr = torch.tensor(psnrs).mean().item()
+        avg_ms_ssim = torch.tensor(ms_ssims).mean().item()
+        avg_training_time = torch.tensor(training_times).mean().item()
+        avg_eval_time = torch.tensor(eval_times).mean().item()
+        avg_eval_fps = torch.tensor(eval_fpses).mean().item()
+        avg_h = image_h // len(image_paths)
+        avg_w = image_w // len(image_paths)
 
-    logwriter.write("Average: {}x{}, PSNR:{:.4f}, MS-SSIM:{:.4f}, Training:{:.4f}s, Eval:{:.8f}s, FPS:{:.4f}".format(
-        avg_h, avg_w, avg_psnr, avg_ms_ssim, avg_training_time, avg_eval_time, avg_eval_fps))    
+        logwriter.write("Average: {}x{}, PSNR:{:.4f}, MS-SSIM:{:.4f}, Training:{:.4f}s, Eval:{:.8f}s, FPS:{:.4f}".format(
+            avg_h, avg_w, avg_psnr, avg_ms_ssim, avg_training_time, avg_eval_time, avg_eval_fps))    
+    else:
+        logwriter.write("No files were processed.")
 
 if __name__ == "__main__":
     main(sys.argv[1:])
