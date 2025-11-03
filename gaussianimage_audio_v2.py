@@ -21,24 +21,25 @@ class GaussianImage_Cholesky(nn.Module):
             1,
         ) # 
         self.device = kwargs["device"]
-        self.feature_dim = 2 # <-- CHANGE: Added a variable for 2 channels (e.g., Real/Imag) instead of 3 (RGB)
+        self.feature_dim = 3 # <-- CUDA FIX: Set back to 3 to satisfy the C++ kernel
+        self.true_feature_dim = 2 # <-- CUDA FIX: We'll use this to know how to slice
 
         self._xyz = nn.Parameter(torch.atanh(2 * (torch.rand(self.init_num_points, 2) - 0.5)))
         self._cholesky = nn.Parameter(torch.rand(self.init_num_points, 3))
         self.register_buffer('_opacity', torch.ones((self.init_num_points, 1)))
-        self._features_dc = nn.Parameter(torch.rand(self.init_num_points, self.feature_dim)) # <-- CHANGE: Use feature_dim (2) instead of 3
+        self._features_dc = nn.Parameter(torch.rand(self.init_num_points, self.feature_dim)) # <-- CUDA FIX: This is now [N, 3]
         self.last_size = (self.H, self.W)
         self.quantize = kwargs["quantize"]
-        self.register_buffer('background', torch.ones(self.feature_dim)) # <-- CHANGE: Use feature_dim (2) instead of 3
+        self.register_buffer('background', torch.ones(self.feature_dim)) # <-- CUDA FIX: This is now [3]
         self.opacity_activation = torch.sigmoid
-        self.rgb_activation = nn.Identity() # <-- CHANGE: From torch.sigmoid. Spectrogram values can be negative.
+        self.rgb_activation = nn.Identity() # This is correct, no sigmoid for spectrograms
         self.register_buffer('bound', torch.tensor([0.5, 0.5]).view(1, 2))
         self.register_buffer('cholesky_bound', torch.tensor([0.5, 0, 0.5]).view(1, 3))
 
         if self.quantize:
             self.xyz_quantizer = FakeQuantizationHalf.apply 
-            self.features_dc_quantizer = VectorQuantizer(codebook_dim=self.feature_dim, codebook_size=8, num_quantizers=2, vector_type="vector", kmeans_iters=5) # <-- CHANGE: codebook_dim is now feature_dim (2)
-            self.cholesky_quantizer = UniformQuantizer(signed=False, bits=6, learned=True, num_channels=3) # <-- NOTE: This remains 3 (for Cholesky params)
+            self.features_dc_quantizer = VectorQuantizer(codebook_dim=self.feature_dim, codebook_size=8, num_quantizers=2, vector_type="vector", kmeans_iters=5) # <-- CUDA FIX: codebook_dim is 3
+            self.cholesky_quantizer = UniformQuantizer(signed=False, bits=6, learned=True, num_channels=3)
 
         if kwargs["opt_type"] == "adam":
             self.optimizer = torch.optim.Adam(self.parameters(), lr=kwargs["lr"])
@@ -69,18 +70,29 @@ class GaussianImage_Cholesky(nn.Module):
         self.xys, depths, self.radii, conics, num_tiles_hit = project_gaussians_2d(self.get_xyz, self.get_cholesky_elements, self.H, self.W, self.tile_bounds)
         out_img = rasterize_gaussians_sum(self.xys, depths, self.radii, conics, num_tiles_hit,
                 self.get_features, self._opacity, self.H, self.W, self.BLOCK_H, self.BLOCK_W, background=self.background, return_alpha=False)
-        # out_img = torch.clamp(out_img, 0, 1) #[H, W, 3] # <-- CHANGE: Removed clamp(0, 1) for spectrograms
-        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # <-- CHANGE: Use feature_dim (2) instead of 3
+        # out_img = torch.clamp(out_img, 0, 1) # Correctly commented out
+        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # <-- CUDA FIX: This now outputs [1, 3, H, W]
         return {"render": out_img}
 
     def train_iter(self, gt_image):
+        # gt_image is [1, 2, H, W] (our real data)
         render_pkg = self.forward()
-        image = render_pkg["render"]
-        loss = loss_fn(image, gt_image, self.loss_type, lambda_value=0.7)
-        loss.backward()
+        image = render_pkg["render"] # This is [1, 3, H, W] (from our 3-channel model)
+
+        # --- CUDA FIX: Slice the rendered image to match the ground truth ---
+        # We only calculate loss on the first 2 channels.
+        image_sliced = image[:, :self.true_feature_dim, :, :] # This is now [1, 2, H, W]
+        # --- END OF FIX ---
+
+        # Now we compare the [1, 2, H, W] slice to the [1, 2, H, W] ground truth
+        loss = loss_fn(image_sliced, gt_image, self.loss_type, lambda_value=0.7)
+        
+        loss.backward() # This will now work. The gradients for the 3rd channel will be zero.
+        
         with torch.no_grad():
-            mse_loss = F.mse_loss(image, gt_image)
-            psnr = 10 * math.log10(1.0 / mse_loss.item()) # <-- NOTE: This PSNR value is no longer meaningful for non-normalized spectrograms
+            # Also use the sliced image for PSNR calculation
+            mse_loss = F.mse_loss(image_sliced, gt_image)
+            psnr = 10 * math.log10(1.0 / mse_loss.item())
         self.optimizer.step()
         self.optimizer.zero_grad(set_to_none = True)
 
@@ -97,19 +109,24 @@ class GaussianImage_Cholesky(nn.Module):
         self.xys, depths, self.radii, conics, num_tiles_hit = project_gaussians_2d(means, cholesky_elements, self.H, self.W, self.tile_bounds)
         out_img = rasterize_gaussians_sum(self.xys, depths, self.radii, conics, num_tiles_hit,
                 colors, self._opacity, self.H, self.W, self.BLOCK_H, self.BLOCK_W, background=self.background, return_alpha=False)
-        # out_img = torch.clamp(out_img, 0, 1) # <-- CHANGE: Removed clamp(0, 1)
-        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # <-- CHANGE: Use feature_dim (2) instead of 3
+        # out_img = torch.clamp(out_img, 0, 1)
+        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # This is [1, 3, H, W]
         vq_loss = l_vqm + l_vqs + l_vqr + l_vqc
         return {"render": out_img, "vq_loss": vq_loss, "unit_bit":[m_bit, s_bit, r_bit, c_bit]}
 
     def train_iter_quantize(self, gt_image):
         render_pkg = self.forward_quantize()
-        image = render_pkg["render"]
-        loss = loss_fn(image, gt_image, self.loss_type, lambda_value=0.7) + render_pkg["vq_loss"]
+        image = render_pkg["render"] # This is [1, 3, H, W]
+
+        # --- CUDA FIX: Slice the rendered image ---
+        image_sliced = image[:, :self.true_feature_dim, :, :] # Slice to [1, 2, H, W]
+        # --- END OF FIX ---
+
+        loss = loss_fn(image_sliced, gt_image, self.loss_type, lambda_value=0.7) + render_pkg["vq_loss"]
         loss.backward()
         with torch.no_grad():
-            mse_loss = F.mse_loss(image, gt_image)
-            psnr = 10 * math.log10(1.0 / mse_loss.item()) # <-- NOTE: This PSNR value is no longer meaningful
+            mse_loss = F.mse_loss(image_sliced, gt_image)
+            psnr = 10 * math.log10(1.0 / mse_loss.item())
         self.optimizer.step()
         self.optimizer.zero_grad(set_to_none=True)
         self.scheduler.step()
@@ -131,23 +148,15 @@ class GaussianImage_Cholesky(nn.Module):
         self.xys, depths, self.radii, conics, num_tiles_hit = project_gaussians_2d(means, cholesky_elements, self.H, self.W, self.tile_bounds)
         out_img = rasterize_gaussians_sum(self.xys, depths, self.radii, conics, num_tiles_hit,
                 colors, self._opacity, self.H, self.W, self.BLOCK_H, self.BLOCK_W, background=self.background, return_alpha=False)
-        # out_img = torch.clamp(out_img, 0, 1) # <-- CHANGE: Removed clamp(0, 1)
-        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # <-- CHANGE: Use feature_dim (2) instead of 3
+        # out_img = torch.clamp(out_img, 0, 1)
+        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # This is [1, 3, H, W]
         return {"render":out_img}
 
-    # ... (Rest of the file remains the same, analysis/compress/decompress functions)
-    # ... (I am omitting the rest for brevity, but the logic inside them follows the same pattern.
-    # ... e.g., in decompress(), you also need to change the final view/permute)
-    
-    # --- Make sure to apply the .view/.permute change in decompress() as well ---
     def decompress(self, encoding_dict):
         xyz = encoding_dict["xyz"]
         num_points, device = xyz.size(0), xyz.device
         feature_dc_compressed, feature_dc_histogram_table, feature_dc_unique = encoding_dict["feature_dc_bitstream"]
         cholesky_compressed, cholesky_histogram_table, cholesky_unique = encoding_dict["cholesky_bitstream"]
-        
-        # NOTE: These '2' and '3' values below are correct.
-        # '2' is for num_quantizers, '3' is for cholesky vector size. Do not change them.
         feature_dc_index = decompress_matrix_flatten_categorical(feature_dc_compressed, feature_dc_histogram_table, feature_dc_unique, num_points*2, (num_points, 2))
         quant_cholesky_elements = decompress_matrix_flatten_categorical(cholesky_compressed, cholesky_histogram_table, cholesky_unique, num_points*3, (num_points, 3))
         feature_dc_index = torch.from_numpy(feature_dc_index).to(device).int() #[800, 2]
@@ -160,11 +169,9 @@ class GaussianImage_Cholesky(nn.Module):
         self.xys, depths, self.radii, conics, num_tiles_hit = project_gaussians_2d(means, cholesky_elements, self.H, self.W, self.tile_bounds)
         out_img = rasterize_gaussians_sum(self.xys, depths, self.radii, conics, num_tiles_hit,
                 colors, self._opacity, self.H, self.W, self.BLOCK_H, self.BLOCK_W, background=self.background, return_alpha=False)
-        # out_img = torch.clamp(out_img, 0, 1) # <-- CHANGE: Removed clamp(0, 1)
-        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # <-- CHANGE: Use feature_dim (2) instead of 3
+        # out_img = torch.clamp(out_img, 0, 1)
+        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # This is [1, 3, H, W]
         return {"render":out_img}
-
-    # ... (analysis functions omitted for brevity) ...
    
     def analysis(self, encoding_dict):
         quant_cholesky_elements, feature_dc_index = encoding_dict["quant_cholesky_elements"], encoding_dict["feature_dc_index"]

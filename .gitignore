@@ -1,3 +1,6 @@
 dataset/
 checkpoints/
 *.wav
+*.png
+outputs/
+img/

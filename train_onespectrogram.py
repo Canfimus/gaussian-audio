@@ -93,27 +93,41 @@ class SimpleTrainer2d:
     def test(self):
         self.gaussian_model.eval()
         with torch.no_grad():
-            out = self.gaussian_model()
-        mse_loss = F.mse_loss(out["render"].float(), self.gt_image.float())
-        psnr = 10 * math.log10(1.0 / mse_loss.item()) # שים לב: PSNR לא מדד אמין כאן
+            out = self.gaussian_model() # out["render"] is [1, 3, H, W]
+        
+        # --- CUDA FIX: Slice the 3-channel output to match the 2-channel ground truth ---
+        # gt_image is [1, 2, H, W]
+        # We must slice the rendered output to match
+        render_sliced = out["render"].float()[:, :self.gaussian_model.true_feature_dim, :, :] # Slice to [1, 2, H, W]
+        # --- END OF FIX ---
+
+        # Now, compare the [1, 2, H, W] slice to the [1, 2, H, W] ground truth
+        mse_loss = F.mse_loss(render_sliced, self.gt_image.float())
+        psnr = 10 * math.log10(1.0 / mse_loss.item())
         
         try:
-            ms_ssim_value = ms_ssim(out["render"].float(), self.gt_image.float(), data_range=1, size_average=True).item()
+            # This should also use the sliced render
+            ms_ssim_value = ms_ssim(render_sliced, self.gt_image.float(), data_range=1, size_average=True).item()
         except:
-            ms_ssim_value = 0.0 # ייכשל כי זה 2 ערוצים
+            ms_ssim_value = 0.0 # Will likely fail anyway
             
-        self.logwriter.write("Test PSNR:{:.4f}, MS_SSIM:{:.6f}".format(psnr, ms_ssim_value))
+        self.logwriter.write("Test PSNR:{:.4f}, MS_S SIM:{:.6f}".format(psnr, ms_ssim_value))
         
-        # שמירת הפלט כ-NPY
+        # Save the output .npy
         if self.save_imgs:
             print(f"Saving output spectrogram to {self.log_dir / (self.image_name + '_fitting.npy')}")
-            output_tensor = out["render"].float().squeeze(0).cpu() # Shape: [2, H, W]
+            
+            # --- CUDA FIX: Save the 2-channel sliced version, not the 3-channel one ---
+            output_tensor = render_sliced.squeeze(0).cpu() # Shape: [2, H, W]
+            # --- END OF FIX ---
+            
             output_tensor = output_tensor.permute(1, 2, 0) # Shape: [H, W, 2]
             output_numpy = output_tensor.numpy()
             name = self.image_name + "_fitting.npy" 
             np.save(str(self.log_dir / name), output_numpy)
             
         return psnr, ms_ssim_value
+
 
 # --- 2. פונקציית טעינת הנתונים (זהה לזו שב-train_audio.py) ---
 def image_path_to_tensor(image_path: Path):
