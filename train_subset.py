@@ -151,9 +151,10 @@ def calculate_num_points_from_rate(spec_width: int, gaussians_per_second: float,
     Returns:
         num_points: Total number of Gaussian points for this spectrogram
     """
-    duration_seconds = spec_width * hop_length / sample_rate
-    num_points = int(gaussians_per_second * duration_seconds)
-    return num_points
+    duration_seconds = float(spec_width * hop_length) / float(sample_rate)
+    num_points = int(float(gaussians_per_second) * duration_seconds)
+    # Ensure it's a Python int, not numpy int
+    return int(num_points)
 
 # --- Arg Parsing Function ---
 def parse_args(argv):
@@ -253,16 +254,18 @@ def main(argv):
         if args.gaussians_per_second is not None:
             # Load the spectrogram to get its width
             spec_data = np.load(image_path)
-            spec_width = spec_data.shape[1]  # W dimension (time frames)
+            spec_width = int(spec_data.shape[1])  # W dimension (time frames)
             num_points = calculate_num_points_from_rate(
                 spec_width,
-                args.gaussians_per_second,
+                float(args.gaussians_per_second),
                 hop_length=256,
                 sample_rate=22050
             )
+            # Ensure num_points is a Python int
+            num_points = int(num_points)
             logwriter.write(f"Using {args.gaussians_per_second} gaussians/sec -> {num_points} total points (duration: {spec_width * 256 / 22050:.2f}s)")
         else:
-            num_points = args.num_points if args.num_points is not None else 50000
+            num_points = int(args.num_points) if args.num_points is not None else 50000
             logwriter.write(f"Using fixed num_points: {num_points}")
 
         trainer = SimpleTrainer2d(
