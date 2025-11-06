@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 from pystoi import stoi
+from pesq import pesq
 
 # --- 1. Spectrogram Parameters (Must match preprocess.py) ---
 N_FFT = 1024
@@ -136,8 +137,8 @@ def analyze_file(original_path, reconstructed_path, base_output_path):
         sf.write(audio_original_path, audio_waveform_orig, ORIGINAL_SR)
         print(f"  ✅ Original audio saved to: {audio_original_path}")
 
-    # --- 5. Calculate audio quality metrics (PSNR and STOI) ---
-    psnr_value = None
+    # --- 5. Calculate audio quality metrics (PESQ and STOI) ---
+    pesq_value = None
     stoi_value = None
 
     if audio_waveform_orig is not None:
@@ -146,12 +147,19 @@ def analyze_file(original_path, reconstructed_path, base_output_path):
         audio_waveform_trimmed = audio_waveform[:min_len]
         audio_waveform_orig_trimmed = audio_waveform_orig[:min_len]
 
-        # Calculate PSNR for audio
-        mse = np.mean((audio_waveform_trimmed - audio_waveform_orig_trimmed) ** 2)
-        if mse > 0:
-            psnr_value = 10 * np.log10(1.0 / mse)
-        else:
-            psnr_value = float('inf')
+        # Calculate PESQ (Perceptual Evaluation of Speech Quality)
+        # PESQ expects sample rate of 8000 or 16000 Hz, so we need to resample
+        try:
+            # Resample to 16kHz for PESQ (narrowband mode)
+            audio_orig_16k = librosa.resample(audio_waveform_orig_trimmed, orig_sr=ORIGINAL_SR, target_sr=16000)
+            audio_recon_16k = librosa.resample(audio_waveform_trimmed, orig_sr=ORIGINAL_SR, target_sr=16000)
+
+            # PESQ returns a score from -0.5 to 4.5 (higher is better)
+            # mode 'wb' = wideband (16kHz), 'nb' = narrowband (8kHz)
+            pesq_value = pesq(16000, audio_orig_16k, audio_recon_16k, 'wb')
+        except Exception as e:
+            print(f"  Warning: PESQ calculation failed: {e}")
+            pesq_value = None
 
         # Calculate STOI (Short-Time Objective Intelligibility)
         try:
@@ -160,10 +168,10 @@ def analyze_file(original_path, reconstructed_path, base_output_path):
             print(f"  Warning: STOI calculation failed: {e}")
             stoi_value = None
 
-        print(f"  📊 Audio PSNR: {psnr_value:.2f} dB")
+        print(f"  📊 PESQ: {pesq_value:.3f}" if pesq_value is not None else "  📊 PESQ: N/A")
         print(f"  📊 STOI: {stoi_value:.4f}" if stoi_value is not None else "  📊 STOI: N/A")
 
-    return psnr_value, stoi_value
+    return pesq_value, stoi_value
 
 
 if __name__ == "__main__":
@@ -216,7 +224,7 @@ if __name__ == "__main__":
         print(f"\nFound {len(reconstructed_files)} reconstructed files. Starting processing...")
 
         # Collect metrics
-        psnr_values = []
+        pesq_values = []
         stoi_values = []
         file_ids = []
 
@@ -229,29 +237,29 @@ if __name__ == "__main__":
                 print(f"  Warning: Original file not found for {file_id}. Skipping.")
                 continue
 
-            psnr, stoi_val = analyze_file(original_path, recon_path, args.output_dir)
+            pesq_val, stoi_val = analyze_file(original_path, recon_path, args.output_dir)
 
-            if psnr is not None and stoi_val is not None:
+            if pesq_val is not None and stoi_val is not None:
                 file_ids.append(file_id)
-                psnr_values.append(psnr)
+                pesq_values.append(pesq_val)
                 stoi_values.append(stoi_val)
 
         # Calculate and save summary metrics
-        if psnr_values and stoi_values:
-            avg_psnr = np.mean(psnr_values)
+        if pesq_values and stoi_values:
+            avg_pesq = np.mean(pesq_values)
             avg_stoi = np.mean(stoi_values)
 
             # Save metrics to CSV
             metrics_path = os.path.join(args.output_dir, 'metrics_summary.csv')
             with open(metrics_path, 'w') as f:
-                f.write("file_id,psnr_db,stoi\n")
-                for fid, p, s in zip(file_ids, psnr_values, stoi_values):
+                f.write("file_id,pesq,stoi\n")
+                for fid, p, s in zip(file_ids, pesq_values, stoi_values):
                     f.write(f"{fid},{p:.4f},{s:.4f}\n")
-                f.write(f"\nAverage,{avg_psnr:.4f},{avg_stoi:.4f}\n")
+                f.write(f"\nAverage,{avg_pesq:.4f},{avg_stoi:.4f}\n")
 
             print("\n" + "="*60)
             print("--- Analysis Complete! ---")
-            print(f"📊 Average Audio PSNR: {avg_psnr:.2f} dB")
+            print(f"📊 Average PESQ: {avg_pesq:.3f}")
             print(f"📊 Average STOI: {avg_stoi:.4f}")
             print(f"Plot files are located in: {os.path.join(args.output_dir, 'plots')}")
             print(f"Audio files are located in: {os.path.join(args.output_dir, 'audio')}")

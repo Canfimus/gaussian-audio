@@ -86,6 +86,7 @@ def run_analysis(run_dir, output_dir, original_dir):
 def plot_experiment_results(comparison_df, experiments_dir):
     """
     Create visualization plots of experiment results.
+    Shows PESQ and STOI with reference lines for original audio quality.
     """
     if comparison_df is None or len(comparison_df) == 0:
         print("⚠️  No data to plot")
@@ -99,30 +100,41 @@ def plot_experiment_results(comparison_df, experiments_dir):
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
     gps_rates = comparison_df['gaussians_per_second'].values
-    psnr_values = comparison_df['avg_psnr_db'].values
+    pesq_values = comparison_df['avg_pesq'].values
     stoi_values = comparison_df['avg_stoi'].values
 
-    # Plot 1: PSNR vs Gaussian Rate
-    axes[0, 0].plot(gps_rates, psnr_values, 'o-', linewidth=2, markersize=8, color='#2E86AB')
+    # Reference values for "perfect" original audio
+    PERFECT_STOI = 1.0  # Perfect intelligibility
+    MAX_PESQ = 4.5      # Maximum PESQ score
+
+    # Plot 1: PESQ vs Gaussian Rate
+    axes[0, 0].plot(gps_rates, pesq_values, 'o-', linewidth=2, markersize=8, color='#2E86AB', label='Reconstructed', zorder=3)
+    # Add reference line for maximum PESQ
+    axes[0, 0].axhline(y=MAX_PESQ, color='green', linestyle='--', linewidth=2, alpha=0.6, label='Original (Max PESQ)', zorder=2)
     axes[0, 0].set_xlabel('Gaussians per Second', fontsize=12, fontweight='bold')
-    axes[0, 0].set_ylabel('Average PSNR (dB)', fontsize=12, fontweight='bold')
-    axes[0, 0].set_title('Audio PSNR vs Gaussian Rate', fontsize=14, fontweight='bold')
-    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].set_ylabel('Average PESQ', fontsize=12, fontweight='bold')
+    axes[0, 0].set_title('Audio PESQ vs Gaussian Rate', fontsize=14, fontweight='bold')
+    axes[0, 0].grid(True, alpha=0.3, zorder=1)
     axes[0, 0].set_xscale('log')
+    axes[0, 0].legend(loc='lower right')
+    axes[0, 0].set_ylim([0, 5.0])
 
     # Add value labels
-    for x, y in zip(gps_rates, psnr_values):
-        axes[0, 0].annotate(f'{y:.1f}', (x, y), textcoords="offset points",
+    for x, y in zip(gps_rates, pesq_values):
+        axes[0, 0].annotate(f'{y:.2f}', (x, y), textcoords="offset points",
                            xytext=(0,10), ha='center', fontsize=9)
 
     # Plot 2: STOI vs Gaussian Rate
-    axes[0, 1].plot(gps_rates, stoi_values, 'o-', linewidth=2, markersize=8, color='#A23B72')
+    axes[0, 1].plot(gps_rates, stoi_values, 'o-', linewidth=2, markersize=8, color='#A23B72', label='Reconstructed', zorder=3)
+    # Add reference line for perfect STOI
+    axes[0, 1].axhline(y=PERFECT_STOI, color='green', linestyle='--', linewidth=2, alpha=0.6, label='Original (Perfect)', zorder=2)
     axes[0, 1].set_xlabel('Gaussians per Second', fontsize=12, fontweight='bold')
     axes[0, 1].set_ylabel('Average STOI', fontsize=12, fontweight='bold')
     axes[0, 1].set_title('Audio STOI vs Gaussian Rate', fontsize=14, fontweight='bold')
-    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].grid(True, alpha=0.3, zorder=1)
     axes[0, 1].set_xscale('log')
-    axes[0, 1].set_ylim([0, 1.0])
+    axes[0, 1].set_ylim([0, 1.05])
+    axes[0, 1].legend(loc='lower right')
 
     # Add value labels
     for x, y in zip(gps_rates, stoi_values):
@@ -131,44 +143,50 @@ def plot_experiment_results(comparison_df, experiments_dir):
 
     # Plot 3: Bar chart comparison
     x_pos = np.arange(len(gps_rates))
-    axes[1, 0].bar(x_pos, psnr_values, color='#2E86AB', alpha=0.7, edgecolor='black')
+    axes[1, 0].bar(x_pos, pesq_values, color='#2E86AB', alpha=0.7, edgecolor='black')
+    axes[1, 0].axhline(y=MAX_PESQ, color='green', linestyle='--', linewidth=2, alpha=0.6, label='Original (Max)')
     axes[1, 0].set_xlabel('Gaussians per Second', fontsize=12, fontweight='bold')
-    axes[1, 0].set_ylabel('Average PSNR (dB)', fontsize=12, fontweight='bold')
-    axes[1, 0].set_title('PSNR Comparison (Bar Chart)', fontsize=14, fontweight='bold')
+    axes[1, 0].set_ylabel('Average PESQ', fontsize=12, fontweight='bold')
+    axes[1, 0].set_title('PESQ Comparison (Bar Chart)', fontsize=14, fontweight='bold')
     axes[1, 0].set_xticks(x_pos)
     axes[1, 0].set_xticklabels([f'{int(g)}' for g in gps_rates], rotation=45)
     axes[1, 0].grid(True, alpha=0.3, axis='y')
+    axes[1, 0].legend(loc='upper left')
+    axes[1, 0].set_ylim([0, 5.0])
 
     # Add value labels on bars
-    for i, (x, y) in enumerate(zip(x_pos, psnr_values)):
-        axes[1, 0].text(x, y + 0.5, f'{y:.1f}', ha='center', fontsize=9)
+    for i, (x, y) in enumerate(zip(x_pos, pesq_values)):
+        axes[1, 0].text(x, y + 0.1, f'{y:.2f}', ha='center', fontsize=9)
 
-    # Plot 4: Dual axis plot (PSNR and STOI together)
+    # Plot 4: Dual axis plot (PESQ and STOI together)
     ax4 = axes[1, 1]
     ax4_twin = ax4.twinx()
 
-    line1 = ax4.plot(gps_rates, psnr_values, 'o-', linewidth=2, markersize=8,
-                     color='#2E86AB', label='PSNR')
+    line1 = ax4.plot(gps_rates, pesq_values, 'o-', linewidth=2, markersize=8,
+                     color='#2E86AB', label='PESQ', zorder=3)
+    line_ref1 = ax4.axhline(y=MAX_PESQ, color='#2E86AB', linestyle='--', linewidth=1.5, alpha=0.4, label='PESQ (Original)', zorder=2)
     ax4.set_xlabel('Gaussians per Second', fontsize=12, fontweight='bold')
-    ax4.set_ylabel('Average PSNR (dB)', fontsize=12, fontweight='bold', color='#2E86AB')
+    ax4.set_ylabel('Average PESQ', fontsize=12, fontweight='bold', color='#2E86AB')
     ax4.tick_params(axis='y', labelcolor='#2E86AB')
     ax4.set_xscale('log')
-    ax4.grid(True, alpha=0.3)
+    ax4.grid(True, alpha=0.3, zorder=1)
+    ax4.set_ylim([0, 5.0])
 
     line2 = ax4_twin.plot(gps_rates, stoi_values, 's-', linewidth=2, markersize=8,
-                         color='#A23B72', label='STOI')
+                         color='#A23B72', label='STOI', zorder=3)
+    line_ref2 = ax4_twin.axhline(y=PERFECT_STOI, color='#A23B72', linestyle='--', linewidth=1.5, alpha=0.4, label='STOI (Original)', zorder=2)
     ax4_twin.set_ylabel('Average STOI', fontsize=12, fontweight='bold', color='#A23B72')
     ax4_twin.tick_params(axis='y', labelcolor='#A23B72')
-    ax4_twin.set_ylim([0, 1.0])
+    ax4_twin.set_ylim([0, 1.05])
 
-    ax4.set_title('PSNR and STOI vs Gaussian Rate', fontsize=14, fontweight='bold')
+    ax4.set_title('PESQ and STOI vs Gaussian Rate', fontsize=14, fontweight='bold')
 
-    # Add legend
+    # Add legend with all lines
     lines = line1 + line2
     labels = [l.get_label() for l in lines]
-    ax4.legend(lines, labels, loc='best')
+    ax4.legend(lines, labels, loc='lower right')
 
-    plt.suptitle('Gaussian Rate Experiment Results', fontsize=16, fontweight='bold', y=0.995)
+    plt.suptitle('Gaussian Rate Experiment Results (with Original Audio Reference)', fontsize=16, fontweight='bold', y=0.995)
     plt.tight_layout()
 
     # Save the plot
@@ -202,15 +220,15 @@ def collect_all_metrics(experiments_dir):
                 avg_row = df[df['file_id'] == 'Average']
 
                 if not avg_row.empty:
-                    avg_psnr = avg_row['psnr_db'].values[0]
+                    avg_pesq = avg_row['pesq'].values[0]
                     avg_stoi = avg_row['stoi'].values[0]
 
                     all_metrics.append({
                         'gaussians_per_second': gps_rate,
-                        'avg_psnr_db': avg_psnr,
+                        'avg_pesq': avg_pesq,
                         'avg_stoi': avg_stoi
                     })
-                    print(f"  ✅ {gps_rate} gps: PSNR={avg_psnr:.2f} dB, STOI={avg_stoi:.4f}")
+                    print(f"  ✅ {gps_rate} gps: PESQ={avg_pesq:.3f}, STOI={avg_stoi:.4f}")
                 else:
                     print(f"  ⚠️  No average metrics found for {gps_rate} gps")
             except Exception as e:
