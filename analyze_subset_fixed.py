@@ -9,6 +9,7 @@ matplotlib.use('Agg')  # Use 'Agg' backend for saving plots on servers (no GUI)
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
+from pystoi import stoi
 
 # --- 1. Spectrogram Parameters (Must match preprocess.py) ---
 N_FFT = 1024
@@ -41,6 +42,7 @@ def load_and_convert_to_db(npy_path):
 def analyze_file(original_path, reconstructed_path, base_output_path):
     """
     Analyzes a single file: creates a plot and an audio file.
+    Returns PSNR and STOI metrics.
     """
     file_id = os.path.basename(original_path).split('.')[0]
     print(f"--- Processing: {file_id} ---")
@@ -51,7 +53,7 @@ def analyze_file(original_path, reconstructed_path, base_output_path):
 
     if spec_db_original is None or spec_db_reconstructed is None:
         print(f"  Skipping file {file_id} due to loading error.")
-        return
+        return None, None
 
     # --- 2. Calculate difference for analysis ---
     diff_db = spec_db_reconstructed - spec_db_original
@@ -104,27 +106,28 @@ def analyze_file(original_path, reconstructed_path, base_output_path):
 
     # --- 4. Generate and save audio ---
     audio_output_path = os.path.join(base_output_path, 'audio', f"{file_id}_reconstructed.wav")
-    
+
     # Perform iSTFT with proper parameters
-    audio_waveform = librosa.istft(S_complex_reconstructed, 
-                                    n_fft=N_FFT, 
+    audio_waveform = librosa.istft(S_complex_reconstructed,
+                                    n_fft=N_FFT,
                                     hop_length=HOP_LENGTH,
                                     length=None)  # Let librosa determine length
-    
+
     # Normalize audio to prevent clipping
     max_val = np.abs(audio_waveform).max()
     if max_val > 0:
         audio_waveform = audio_waveform / max_val * 0.95
-    
+
     # Save as .wav file
     sf.write(audio_output_path, audio_waveform, ORIGINAL_SR)
     print(f"  ✅ Audio saved to: {audio_output_path}")
-    
-    # Also save original for comparison
+
+    # Also save original for comparison and calculate metrics
+    audio_waveform_orig = None
     if S_complex_original is not None:
         audio_original_path = os.path.join(base_output_path, 'audio', f"{file_id}_original.wav")
-        audio_waveform_orig = librosa.istft(S_complex_original, 
-                                            n_fft=N_FFT, 
+        audio_waveform_orig = librosa.istft(S_complex_original,
+                                            n_fft=N_FFT,
                                             hop_length=HOP_LENGTH,
                                             length=None)
         max_val_orig = np.abs(audio_waveform_orig).max()
@@ -132,6 +135,35 @@ def analyze_file(original_path, reconstructed_path, base_output_path):
             audio_waveform_orig = audio_waveform_orig / max_val_orig * 0.95
         sf.write(audio_original_path, audio_waveform_orig, ORIGINAL_SR)
         print(f"  ✅ Original audio saved to: {audio_original_path}")
+
+    # --- 5. Calculate audio quality metrics (PSNR and STOI) ---
+    psnr_value = None
+    stoi_value = None
+
+    if audio_waveform_orig is not None:
+        # Ensure both waveforms have the same length
+        min_len = min(len(audio_waveform), len(audio_waveform_orig))
+        audio_waveform_trimmed = audio_waveform[:min_len]
+        audio_waveform_orig_trimmed = audio_waveform_orig[:min_len]
+
+        # Calculate PSNR for audio
+        mse = np.mean((audio_waveform_trimmed - audio_waveform_orig_trimmed) ** 2)
+        if mse > 0:
+            psnr_value = 10 * np.log10(1.0 / mse)
+        else:
+            psnr_value = float('inf')
+
+        # Calculate STOI (Short-Time Objective Intelligibility)
+        try:
+            stoi_value = stoi(audio_waveform_orig_trimmed, audio_waveform_trimmed, ORIGINAL_SR, extended=False)
+        except Exception as e:
+            print(f"  Warning: STOI calculation failed: {e}")
+            stoi_value = None
+
+        print(f"  📊 Audio PSNR: {psnr_value:.2f} dB")
+        print(f"  📊 STOI: {stoi_value:.4f}" if stoi_value is not None else "  📊 STOI: N/A")
+
+    return psnr_value, stoi_value
 
 
 if __name__ == "__main__":
@@ -182,20 +214,52 @@ if __name__ == "__main__":
         print("Please ensure you ran `train_subset.py` with the `--save_imgs` flag and the path is correct.")
     else:
         print(f"\nFound {len(reconstructed_files)} reconstructed files. Starting processing...")
-        
+
+        # Collect metrics
+        psnr_values = []
+        stoi_values = []
+        file_ids = []
+
         for i, recon_path in enumerate(reconstructed_files, 1):
             print(f"\n[{i}/{len(reconstructed_files)}]")
             file_id = os.path.basename(recon_path).replace('_fitting.npy', '')
             original_path = os.path.join(args.original_dir, f"{file_id}.npy")
-            
+
             if not os.path.exists(original_path):
                 print(f"  Warning: Original file not found for {file_id}. Skipping.")
                 continue
-            
-            analyze_file(original_path, recon_path, args.output_dir)
 
-        print("\n" + "="*60)
-        print("--- Analysis Complete! ---")
-        print(f"Plot files are located in: {os.path.join(args.output_dir, 'plots')}")
-        print(f"Audio files are located in: {os.path.join(args.output_dir, 'audio')}")
-        print("="*60)
+            psnr, stoi_val = analyze_file(original_path, recon_path, args.output_dir)
+
+            if psnr is not None and stoi_val is not None:
+                file_ids.append(file_id)
+                psnr_values.append(psnr)
+                stoi_values.append(stoi_val)
+
+        # Calculate and save summary metrics
+        if psnr_values and stoi_values:
+            avg_psnr = np.mean(psnr_values)
+            avg_stoi = np.mean(stoi_values)
+
+            # Save metrics to CSV
+            metrics_path = os.path.join(args.output_dir, 'metrics_summary.csv')
+            with open(metrics_path, 'w') as f:
+                f.write("file_id,psnr_db,stoi\n")
+                for fid, p, s in zip(file_ids, psnr_values, stoi_values):
+                    f.write(f"{fid},{p:.4f},{s:.4f}\n")
+                f.write(f"\nAverage,{avg_psnr:.4f},{avg_stoi:.4f}\n")
+
+            print("\n" + "="*60)
+            print("--- Analysis Complete! ---")
+            print(f"📊 Average Audio PSNR: {avg_psnr:.2f} dB")
+            print(f"📊 Average STOI: {avg_stoi:.4f}")
+            print(f"Plot files are located in: {os.path.join(args.output_dir, 'plots')}")
+            print(f"Audio files are located in: {os.path.join(args.output_dir, 'audio')}")
+            print(f"Metrics saved to: {metrics_path}")
+            print("="*60)
+        else:
+            print("\n" + "="*60)
+            print("--- Analysis Complete (No metrics calculated) ---")
+            print(f"Plot files are located in: {os.path.join(args.output_dir, 'plots')}")
+            print(f"Audio files are located in: {os.path.join(args.output_dir, 'audio')}")
+            print("="*60)

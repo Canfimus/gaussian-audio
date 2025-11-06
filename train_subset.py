@@ -16,7 +16,7 @@ import glob # Needed to find .npy files
 import os # Needed to join paths
 
 # Define the number of files for our subset
-SUBSET_SIZE = 10
+SUBSET_SIZE = 50
 
 class SimpleTrainer2d:
     """Trains random 2d gaussians to fit a single spectrogram."""
@@ -40,7 +40,11 @@ class SimpleTrainer2d:
         
         self.iterations = iterations
         self.save_imgs = args.save_imgs
-        self.log_dir = Path(f"./checkpoints/{args.data_name}/{model_name}_{args.iterations}_{num_points}/{self.image_name}")
+        # Create log directory name based on whether using gps or fixed num_points
+        if hasattr(args, 'gps_rate') and args.gps_rate is not None:
+            self.log_dir = Path(f"./checkpoints/{args.data_name}/{model_name}_{args.iterations}_{args.gps_rate}gps/{self.image_name}")
+        else:
+            self.log_dir = Path(f"./checkpoints/{args.data_name}/{model_name}_{args.iterations}_{num_points}/{self.image_name}")
         
         if model_name == "GaussianImage_Cholesky":
             # Import our 3-channel (fixed) model
@@ -132,6 +136,25 @@ def image_path_to_tensor(image_path: Path):
     img_tensor = img_tensor.unsqueeze(0) # [1, 2, H, W]
     return img_tensor
 
+# --- Helper function to calculate num_points from gaussians_per_second ---
+def calculate_num_points_from_rate(spec_width: int, gaussians_per_second: float,
+                                   hop_length: int = 256, sample_rate: int = 22050):
+    """
+    Calculate the number of Gaussian points based on gaussians per second rate.
+
+    Args:
+        spec_width: Width of the spectrogram (number of time frames)
+        gaussians_per_second: Desired rate of Gaussians per second
+        hop_length: STFT hop length (default: 256)
+        sample_rate: Audio sample rate (default: 22050)
+
+    Returns:
+        num_points: Total number of Gaussian points for this spectrogram
+    """
+    duration_seconds = spec_width * hop_length / sample_rate
+    num_points = int(gaussians_per_second * duration_seconds)
+    return num_points
+
 # --- Arg Parsing Function ---
 def parse_args(argv):
     parser = argparse.ArgumentParser(description="Subset training script for audio spectrograms.")
@@ -157,8 +180,14 @@ def parse_args(argv):
     parser.add_argument(
         "--num_points",
         type=int,
-        default=50000,
-        help="2D GS points (default: %(default)s)",
+        default=None,
+        help="2D GS points (default: %(default)s). If --gaussians_per_second is set, this is ignored.",
+    )
+    parser.add_argument(
+        "--gaussians_per_second",
+        type=float,
+        default=None,
+        help="Rate of Gaussians per second of audio. If set, overrides --num_points.",
     )
     parser.add_argument(
         "--lr",
@@ -188,8 +217,14 @@ def main(argv):
         torch.backends.cudnn.benchmark = False
         np.random.seed(args.seed)
 
-    # Setup the main logger for the whole run
-    logwriter = LogWriter(Path(f"./checkpoints/{args.data_name}/{args.iterations}_{args.num_points}"))
+    # Setup the main logger for the whole run based on whether using gps or fixed num_points
+    if args.gaussians_per_second is not None:
+        args.gps_rate = args.gaussians_per_second  # Store for later use
+        logwriter = LogWriter(Path(f"./checkpoints/{args.data_name}/{args.iterations}_{args.gaussians_per_second}gps"))
+    else:
+        args.gps_rate = None
+        num_pts = args.num_points if args.num_points is not None else 50000
+        logwriter = LogWriter(Path(f"./checkpoints/{args.data_name}/{args.iterations}_{num_pts}"))
     
     # Find all .npy files in the dataset directory
     print(f"מחפש קבצי .npy בנתיב: {args.dataset}")
@@ -214,12 +249,28 @@ def main(argv):
         image_name = image_path.stem
         logwriter.write(f"\n--- מתחיל אימון עבור: {image_name} ---")
 
+        # Calculate num_points based on gaussians_per_second if specified
+        if args.gaussians_per_second is not None:
+            # Load the spectrogram to get its width
+            spec_data = np.load(image_path)
+            spec_width = spec_data.shape[1]  # W dimension (time frames)
+            num_points = calculate_num_points_from_rate(
+                spec_width,
+                args.gaussians_per_second,
+                hop_length=256,
+                sample_rate=22050
+            )
+            logwriter.write(f"Using {args.gaussians_per_second} gaussians/sec -> {num_points} total points (duration: {spec_width * 256 / 22050:.2f}s)")
+        else:
+            num_points = args.num_points if args.num_points is not None else 50000
+            logwriter.write(f"Using fixed num_points: {num_points}")
+
         trainer = SimpleTrainer2d(
-            image_path=image_path, 
-            num_points=args.num_points, 
-            iterations=args.iterations, 
+            image_path=image_path,
+            num_points=num_points,
+            iterations=args.iterations,
             model_name="GaussianImage_Cholesky", # Hardcoded for this script
-            args=args, 
+            args=args,
             model_path=None # We always train from scratch
         )
         
