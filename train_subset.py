@@ -50,9 +50,11 @@ class SimpleTrainer2d:
         
         if model_name == "GaussianImage_Cholesky":
             # Import our 3-channel (fixed) model
-            from gaussianimage_audio_v2 import GaussianImage_Cholesky 
-            self.gaussian_model = GaussianImage_Cholesky(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W, 
-                device=self.device, lr=args.lr, quantize=False).to(self.device)
+            from gaussianimage_audio_v2 import GaussianImage_Cholesky
+            # Check if quantization is enabled
+            use_quantize = args.quantize if hasattr(args, 'quantize') else False
+            self.gaussian_model = GaussianImage_Cholesky(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W,
+                device=self.device, lr=args.lr, quantize=use_quantize).to(self.device)
         else:
             raise ValueError(f"Model name '{model_name}' not supported. Only GaussianImage_Cholesky is configured.")
 
@@ -200,6 +202,7 @@ def parse_args(argv):
     )
     parser.add_argument("--seed", type=int, default=1, help="Set random seed for reproducibility")
     parser.add_argument("--save_imgs", action="store_true", help="Save output .npy spectrograms")
+    parser.add_argument("--quantize", action="store_true", help="Enable quantization for compression")
     
     # We remove these as they are not needed for this script
     # parser.add_argument("--model_name", ... )
