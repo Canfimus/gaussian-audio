@@ -16,7 +16,7 @@ import glob # Needed to find .npy files
 import os # Needed to join paths
 
 # Define the number of files for our subset
-SUBSET_SIZE = 50
+SUBSET_SIZE = 3  # Using 3 for debugging
 
 class SimpleTrainer2d:
     """Trains random 2d gaussians to fit a single spectrogram."""
