@@ -42,7 +42,9 @@ class SimpleTrainer2d:
         self.save_imgs = args.save_imgs
         # Create log directory name based on whether using gps or fixed num_points
         if hasattr(args, 'gps_rate') and args.gps_rate is not None:
-            self.log_dir = Path(f"./checkpoints/{args.data_name}/{model_name}_{args.iterations}_{args.gps_rate}gps/{self.image_name}")
+            # Convert to int for cleaner directory names
+            gps_rate_int = int(args.gps_rate)
+            self.log_dir = Path(f"./checkpoints/{args.data_name}/{model_name}_{args.iterations}_{gps_rate_int}gps/{self.image_name}")
         else:
             self.log_dir = Path(f"./checkpoints/{args.data_name}/{model_name}_{args.iterations}_{num_points}/{self.image_name}")
         
@@ -220,8 +222,9 @@ def main(argv):
 
     # Setup the main logger for the whole run based on whether using gps or fixed num_points
     if args.gaussians_per_second is not None:
-        args.gps_rate = args.gaussians_per_second  # Store for later use
-        logwriter = LogWriter(Path(f"./checkpoints/{args.data_name}/{args.iterations}_{args.gaussians_per_second}gps"))
+        gps_rate_int = int(args.gaussians_per_second)  # Convert to int for clean naming
+        args.gps_rate = gps_rate_int  # Store as int for later use
+        logwriter = LogWriter(Path(f"./checkpoints/{args.data_name}/{args.iterations}_{gps_rate_int}gps"))
     else:
         args.gps_rate = None
         num_pts = args.num_points if args.num_points is not None else 50000

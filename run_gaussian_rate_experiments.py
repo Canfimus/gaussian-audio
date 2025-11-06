@@ -319,10 +319,11 @@ def main():
 
         for gps_rate in rates_to_test:
             # Construct checkpoint directory path
-            run_dir = f"./checkpoints/{DATA_NAME}/GaussianImage_Cholesky_{args.iterations}_{gps_rate}gps"
+            gps_rate_int = int(gps_rate)  # Ensure it's an int for path matching
+            run_dir = f"./checkpoints/{DATA_NAME}/GaussianImage_Cholesky_{args.iterations}_{gps_rate_int}gps"
 
             if os.path.exists(run_dir):
-                output_dir = os.path.join(experiments_dir, f"analysis_{gps_rate}gps")
+                output_dir = os.path.join(experiments_dir, f"analysis_{gps_rate_int}gps")
 
                 run_analysis(
                     run_dir=run_dir,
