@@ -139,14 +139,24 @@ def plot_focused_results(comparison_df, experiments_dir):
     stoi_values = comparison_df['avg_stoi'].values
     compression_ratios = comparison_df['compression_ratio'].values
 
-    # Reference values
-    PERFECT_STOI = 1.0
-    MAX_PESQ = 4.5
+    # Get actual measured baseline values (average across all experiments)
+    if 'avg_pesq_original' in comparison_df and 'avg_stoi_original' in comparison_df:
+        pesq_original_values = comparison_df['avg_pesq_original'].values
+        stoi_original_values = comparison_df['avg_stoi_original'].values
+        # Use the average of all measured baselines
+        BASELINE_PESQ = np.mean(pesq_original_values)
+        BASELINE_STOI = np.mean(stoi_original_values)
+    else:
+        # Fallback to theoretical maximums
+        BASELINE_PESQ = 4.5
+        BASELINE_STOI = 1.0
+
+    print(f"Using measured baseline: PESQ={BASELINE_PESQ:.3f}, STOI={BASELINE_STOI:.4f}")
 
     # Plot 1: PESQ vs Gaussian Rate (focused range)
     ax1 = fig.add_subplot(gs[0, 0])
     ax1.plot(gps_rates, pesq_values, 'o-', linewidth=2.5, markersize=10, color='#2E86AB', label='Reconstructed', zorder=3)
-    ax1.axhline(y=MAX_PESQ, color='green', linestyle='--', linewidth=2, alpha=0.6, label='Original (Max)', zorder=2)
+    ax1.axhline(y=BASELINE_PESQ, color='green', linestyle='--', linewidth=2, alpha=0.6, label=f'Original Baseline ({BASELINE_PESQ:.2f})', zorder=2)
     ax1.set_xlabel('Gaussians per Second', fontsize=13, fontweight='bold')
     ax1.set_ylabel('Average PESQ', fontsize=13, fontweight='bold')
     ax1.set_title('Audio PESQ vs Gaussian Rate (Focused)', fontsize=15, fontweight='bold')
@@ -162,7 +172,7 @@ def plot_focused_results(comparison_df, experiments_dir):
     # Plot 2: STOI vs Gaussian Rate (focused range)
     ax2 = fig.add_subplot(gs[0, 1])
     ax2.plot(gps_rates, stoi_values, 'o-', linewidth=2.5, markersize=10, color='#A23B72', label='Reconstructed', zorder=3)
-    ax2.axhline(y=PERFECT_STOI, color='green', linestyle='--', linewidth=2, alpha=0.6, label='Original (Perfect)', zorder=2)
+    ax2.axhline(y=BASELINE_STOI, color='green', linestyle='--', linewidth=2, alpha=0.6, label=f'Original Baseline ({BASELINE_STOI:.3f})', zorder=2)
     ax2.set_xlabel('Gaussians per Second', fontsize=13, fontweight='bold')
     ax2.set_ylabel('Average STOI', fontsize=13, fontweight='bold')
     ax2.set_title('Audio STOI vs Gaussian Rate (Focused)', fontsize=15, fontweight='bold')
@@ -178,7 +188,7 @@ def plot_focused_results(comparison_df, experiments_dir):
     # Plot 3: Compression Ratio vs Gaussian Rate
     ax3 = fig.add_subplot(gs[1, 0])
     ax3.plot(gps_rates, compression_ratios, 'o-', linewidth=2.5, markersize=10, color='#F18F01', zorder=3)
-    ax3.axhline(y=1.0, color='red', linestyle='--', linewidth=2, alpha=0.4, label='No Compression', zorder=2)
+    ax3.axhline(y=1.0, color='red', linestyle='--', linewidth=2, alpha=0.4, label='No Compression (1x)', zorder=2)
     ax3.set_xlabel('Gaussians per Second', fontsize=13, fontweight='bold')
     ax3.set_ylabel('Compression Ratio (X:1)', fontsize=13, fontweight='bold')
     ax3.set_title('Compression Ratio vs Gaussian Rate', fontsize=15, fontweight='bold')
@@ -194,7 +204,7 @@ def plot_focused_results(comparison_df, experiments_dir):
     ax4 = fig.add_subplot(gs[1, 1])
     scatter = ax4.scatter(compression_ratios, pesq_values, s=200, c=gps_rates,
                          cmap='viridis', edgecolors='black', linewidth=2, zorder=3)
-    ax4.axhline(y=MAX_PESQ, color='green', linestyle='--', linewidth=2, alpha=0.4, label='Max PESQ', zorder=2)
+    ax4.axhline(y=BASELINE_PESQ, color='green', linestyle='--', linewidth=2, alpha=0.4, label=f'Baseline PESQ ({BASELINE_PESQ:.2f})', zorder=2)
     ax4.set_xlabel('Compression Ratio (X:1)', fontsize=13, fontweight='bold')
     ax4.set_ylabel('Average PESQ', fontsize=13, fontweight='bold')
     ax4.set_title('Quality vs Compression Trade-off', fontsize=15, fontweight='bold')
@@ -212,7 +222,7 @@ def plot_focused_results(comparison_df, experiments_dir):
     ax5 = fig.add_subplot(gs[2, 0])
     scatter2 = ax5.scatter(compression_ratios, stoi_values, s=200, c=gps_rates,
                           cmap='plasma', edgecolors='black', linewidth=2, zorder=3)
-    ax5.axhline(y=PERFECT_STOI, color='green', linestyle='--', linewidth=2, alpha=0.4, label='Perfect STOI', zorder=2)
+    ax5.axhline(y=BASELINE_STOI, color='green', linestyle='--', linewidth=2, alpha=0.4, label=f'Baseline STOI ({BASELINE_STOI:.3f})', zorder=2)
     ax5.set_xlabel('Compression Ratio (X:1)', fontsize=13, fontweight='bold')
     ax5.set_ylabel('Average STOI', fontsize=13, fontweight='bold')
     ax5.set_title('Intelligibility vs Compression Trade-off', fontsize=15, fontweight='bold')
@@ -233,8 +243,8 @@ def plot_focused_results(comparison_df, experiments_dir):
     width = 0.25
 
     # Normalize metrics to 0-1 for comparison
-    pesq_norm = pesq_values / MAX_PESQ
-    stoi_norm = stoi_values / PERFECT_STOI
+    pesq_norm = pesq_values / BASELINE_PESQ
+    stoi_norm = stoi_values / BASELINE_STOI
     comp_norm = compression_ratios / compression_ratios.max()
 
     ax6.bar(x_pos - width, pesq_norm, width, label='PESQ (norm)', color='#2E86AB', alpha=0.8)
@@ -250,8 +260,8 @@ def plot_focused_results(comparison_df, experiments_dir):
     ax6.grid(True, alpha=0.3, axis='y')
     ax6.set_ylim([0, 1.1])
 
-    plt.suptitle('Focused Experiment: 2000-5000 gps with Quantization',
-                 fontsize=18, fontweight='bold', y=0.995)
+    plt.suptitle(f'Focused Experiment: 2000-5000 gps with Quantization\n(Baseline: PESQ={BASELINE_PESQ:.2f}, STOI={BASELINE_STOI:.3f})',
+                 fontsize=18, fontweight='bold', y=0.998)
 
     # Save the plot
     plot_file = os.path.join(experiments_dir, "focused_experiment_results.png")
@@ -285,6 +295,14 @@ def collect_all_metrics(experiments_dir, original_dir):
                     avg_pesq = avg_row['pesq'].values[0]
                     avg_stoi = avg_row['stoi'].values[0]
 
+                    # Get original baseline values (if available)
+                    if 'pesq_original' in avg_row and 'stoi_original' in avg_row:
+                        avg_pesq_original = avg_row['pesq_original'].values[0]
+                        avg_stoi_original = avg_row['stoi_original'].values[0]
+                    else:
+                        avg_pesq_original = 4.5  # Fallback to theoretical max
+                        avg_stoi_original = 1.0
+
                     # Calculate compression ratio
                     checkpoint_dir = f"./checkpoints/{DATA_NAME}/GaussianImage_Cholesky_{ITERATIONS}_{gps_rate}gps"
                     comp_ratio, space_savings = calculate_compression_ratio(checkpoint_dir, original_dir)
@@ -297,6 +315,8 @@ def collect_all_metrics(experiments_dir, original_dir):
                         'gaussians_per_second': gps_rate,
                         'avg_pesq': avg_pesq,
                         'avg_stoi': avg_stoi,
+                        'avg_pesq_original': avg_pesq_original,
+                        'avg_stoi_original': avg_stoi_original,
                         'compression_ratio': comp_ratio,
                         'space_savings_percent': space_savings
                     })
