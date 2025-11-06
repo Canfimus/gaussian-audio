@@ -1,0 +1,91 @@
+============================================================
+Audio Quality Evaluation Results
+============================================================
+
+File: LJ001-0001
+  PESQ: 2.5414
+  STOI: 0.9541
+  VUV_F1: 0.9464
+  VUV_Precision: 0.9398
+  VUV_Recall: 0.9531
+  SNR_dB: 3.3944
+
+File: LJ001-0002
+  PESQ: 4.0738
+  STOI: 0.9911
+  VUV_F1: 0.9873
+  VUV_Precision: 0.9750
+  VUV_Recall: 1.0000
+  SNR_dB: 18.4981
+
+File: LJ001-0003
+  PESQ: 2.5760
+  STOI: 0.9512
+  VUV_F1: 0.9412
+  VUV_Precision: 0.9498
+  VUV_Recall: 0.9327
+  SNR_dB: 5.2586
+
+File: LJ001-0004
+  PESQ: 3.4392
+  STOI: 0.9888
+  VUV_F1: 0.9860
+  VUV_Precision: 0.9907
+  VUV_Recall: 0.9815
+  SNR_dB: 16.8617
+
+File: LJ001-0005
+  PESQ: 2.7352
+  STOI: 0.9656
+  VUV_F1: 0.9556
+  VUV_Precision: 0.9718
+  VUV_Recall: 0.9399
+  SNR_dB: 8.0554
+
+File: LJ001-0006
+  PESQ: 3.5383
+  STOI: 0.9892
+  VUV_F1: 0.9831
+  VUV_Precision: 0.9748
+  VUV_Recall: 0.9915
+  SNR_dB: 13.1939
+
+File: LJ001-0007
+  PESQ: 2.7894
+  STOI: 0.9665
+  VUV_F1: 0.9547
+  VUV_Precision: 0.9615
+  VUV_Recall: 0.9479
+  SNR_dB: 8.8013
+
+File: LJ001-0008
+  PESQ: 3.9671
+  STOI: 0.9926
+  VUV_F1: 0.9867
+  VUV_Precision: 0.9737
+  VUV_Recall: 1.0000
+  SNR_dB: 12.5168
+
+File: LJ001-0009
+  PESQ: 3.0183
+  STOI: 0.9691
+  VUV_F1: 0.9711
+  VUV_Precision: 0.9545
+  VUV_Recall: 0.9882
+  SNR_dB: 8.7384
+
+File: LJ001-0010
+  PESQ: 2.7693
+  STOI: 0.9670
+  VUV_F1: 0.9681
+  VUV_Precision: 0.9681
+  VUV_Recall: 0.9681
+  SNR_dB: 8.3810
+
+============================================================
+AVERAGE RESULTS
+============================================================
+PESQ: 3.1448 ± 0.5403
+STOI: 0.9735 ± 0.0148
+VUV_F1: 0.9680 ± 0.0167
+SNR_dB: 10.3700 ± 4.5827

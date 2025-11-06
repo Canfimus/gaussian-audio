@@ -1,0 +1,115 @@
+================================================================================
+Comprehensive Audio Quality + Compression Analysis
+================================================================================
+
+File: LJ001-0001
+  Duration: 9.65 seconds
+  Original WAV: 415.5 KB (352.8 kbps)
+  Compressed NPY: 3334.6 KB (2831.4 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 2.5414
+  STOI: 0.9541
+  VUV_F1: 0.9439
+  SNR_dB: 3.3944
+
+File: LJ001-0002
+  Duration: 1.89 seconds
+  Original WAV: 81.5 KB (353.0 kbps)
+  Compressed NPY: 657.4 KB (2845.8 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 4.0738
+  STOI: 0.9911
+  VUV_F1: 0.9851
+  SNR_dB: 18.4981
+
+File: LJ001-0003
+  Duration: 9.66 seconds
+  Original WAV: 416.0 KB (352.8 kbps)
+  Compressed NPY: 3338.6 KB (2831.4 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 2.5760
+  STOI: 0.9512
+  VUV_F1: 0.9433
+  SNR_dB: 5.2586
+
+File: LJ001-0004
+  Duration: 5.13 seconds
+  Original WAV: 221.0 KB (352.9 kbps)
+  Compressed NPY: 1775.6 KB (2834.5 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 3.4392
+  STOI: 0.9888
+  VUV_F1: 0.9811
+  SNR_dB: 16.8617
+
+File: LJ001-0005
+  Duration: 8.10 seconds
+  Original WAV: 349.0 KB (352.8 kbps)
+  Compressed NPY: 2801.6 KB (2832.1 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 2.7352
+  STOI: 0.9656
+  VUV_F1: 0.9553
+  SNR_dB: 8.0554
+
+File: LJ001-0006
+  Duration: 5.68 seconds
+  Original WAV: 244.5 KB (352.9 kbps)
+  Compressed NPY: 1964.0 KB (2833.9 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 3.5383
+  STOI: 0.9892
+  VUV_F1: 0.9831
+  SNR_dB: 13.1939
+
+File: LJ001-0007
+  Duration: 8.38 seconds
+  Original WAV: 361.0 KB (352.8 kbps)
+  Compressed NPY: 2897.8 KB (2832.0 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 2.7894
+  STOI: 0.9665
+  VUV_F1: 0.9547
+  SNR_dB: 8.8013
+
+File: LJ001-0008
+  Duration: 1.78 seconds
+  Original WAV: 76.5 KB (353.0 kbps)
+  Compressed NPY: 617.3 KB (2847.0 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 3.9671
+  STOI: 0.9926
+  VUV_F1: 0.9867
+  SNR_dB: 12.5168
+
+File: LJ001-0009
+  Duration: 7.55 seconds
+  Original WAV: 325.0 KB (352.8 kbps)
+  Compressed NPY: 2609.2 KB (2832.4 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 3.0183
+  STOI: 0.9691
+  VUV_F1: 0.9711
+  SNR_dB: 8.7384
+
+File: LJ001-0010
+  Duration: 8.81 seconds
+  Original WAV: 379.5 KB (352.8 kbps)
+  Compressed NPY: 3046.1 KB (2831.8 kbps)
+  Compression Ratio: 0.12x
+  PESQ: 2.7693
+  STOI: 0.9670
+  VUV_F1: 0.9681
+  SNR_dB: 8.3810
+
+================================================================================
+AVERAGE RESULTS
+================================================================================
+duration_sec: 6.6630 ± 2.7978
+original_wav_kbps: 352.8760 ± 0.0590
+compressed_npy_kbps: 2835.2195 ± 5.6723
+compression_ratio: 0.1245 ± 0.0002
+PESQ: 3.1448 ± 0.5403
+STOI: 0.9735 ± 0.0148
+VUV_F1: 0.9672 ± 0.0160
+SNR_dB: 10.3700 ± 4.5827
