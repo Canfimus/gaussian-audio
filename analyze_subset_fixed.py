@@ -40,7 +40,65 @@ def load_and_convert_to_db(npy_path):
     
     return S_db, S_complex  # Return complex spec for audio
 
-def analyze_file(original_path, reconstructed_path, base_output_path):
+def calculate_original_baseline(original_audio_path, original_spec_path):
+    """
+    Calculate the baseline PESQ/STOI by comparing:
+    - Original WAV file
+    - vs Audio reconstructed from spectrogram (STFT→ISTFT)
+
+    This measures the quality ceiling from the spectrogram representation itself.
+    """
+    try:
+        # Load original WAV file
+        audio_original_wav, sr_orig = librosa.load(original_audio_path, sr=None)
+
+        # Load spectrogram and reconstruct audio
+        spec_ri = np.load(original_spec_path)
+        S_complex = spec_ri[..., 0] + 1j * spec_ri[..., 1]
+        audio_from_spec = librosa.istft(S_complex, n_fft=N_FFT, hop_length=HOP_LENGTH, length=None)
+
+        # Ensure both have same length
+        min_len = min(len(audio_original_wav), len(audio_from_spec))
+        audio_original_wav = audio_original_wav[:min_len]
+        audio_from_spec = audio_from_spec[:min_len]
+
+        # Normalize both
+        max_val_orig = np.abs(audio_original_wav).max()
+        if max_val_orig > 0:
+            audio_original_wav = audio_original_wav / max_val_orig * 0.95
+
+        max_val_spec = np.abs(audio_from_spec).max()
+        if max_val_spec > 0:
+            audio_from_spec = audio_from_spec / max_val_spec * 0.95
+
+        # Calculate PESQ
+        audio_orig_16k = librosa.resample(audio_original_wav, orig_sr=sr_orig, target_sr=16000)
+        audio_spec_16k = librosa.resample(audio_from_spec, orig_sr=sr_orig, target_sr=16000)
+        pesq_baseline = pesq(16000, audio_orig_16k, audio_spec_16k, 'wb')
+
+        # Calculate STOI
+        stoi_baseline = stoi(audio_original_wav, audio_from_spec, sr_orig, extended=False)
+
+        return pesq_baseline, stoi_baseline
+
+    except Exception as e:
+        print(f"  Warning: Could not calculate baseline from WAV file: {e}")
+        return None, None
+
+
+def analyze_file(original_path, reconstructed_path, base_output_path, original_wav_dir=None):
+    """
+    Analyzes a single file: creates a plot and an audio file.
+    Returns PESQ and STOI metrics for both reconstructed and original baseline.
+
+    Args:
+        original_path: Path to original spectrogram .npy
+        reconstructed_path: Path to reconstructed spectrogram .npy
+        base_output_path: Output directory
+        original_wav_dir: Optional directory containing original .wav files for baseline calculation
+    """
+    file_id = os.path.basename(original_path).split('.')[0]
+    print(f"--- Processing: {file_id} ---")
     """
     Analyzes a single file: creates a plot and an audio file.
     Returns PSNR and STOI metrics.
@@ -168,42 +226,31 @@ def analyze_file(original_path, reconstructed_path, base_output_path):
             print(f"  Warning: STOI calculation failed: {e}")
             stoi_value = None
 
-        # Calculate PESQ and STOI for ORIGINAL audio (STFT→ISTFT baseline)
-        # This measures the quality loss from just the spectrogram conversion process
-        try:
-            # The original audio went through: Audio → STFT → stored as .npy → ISTFT → Audio
-            # We compare the ISTFT output with... well, itself after resampling
-            # To get a true baseline, we need to load the actual source audio file
-            # For now, we'll use the theoretical maximum as a good approximation
-            # In a perfect world, PESQ(original_processed, original_processed) ≈ 4.3-4.5
-            # STOI(original_processed, original_processed) ≈ 0.98-1.0
-
-            # Create a "perfect reconstruction" by reprocessing the original
-            audio_orig_reprocessed = librosa.resample(audio_waveform_orig_trimmed, orig_sr=ORIGINAL_SR, target_sr=16000)
-            audio_orig_reprocessed_back = librosa.resample(audio_orig_reprocessed, orig_sr=16000, target_sr=ORIGINAL_SR)
-
-            # Ensure same length after reprocessing
-            min_len_baseline = min(len(audio_orig_reprocessed_back), len(audio_waveform_orig_trimmed))
-
-            # Calculate baseline PESQ (resampling artifacts only)
-            audio_baseline_16k = librosa.resample(audio_orig_reprocessed_back[:min_len_baseline], orig_sr=ORIGINAL_SR, target_sr=16000)
-            audio_orig_baseline_16k = librosa.resample(audio_waveform_orig_trimmed[:min_len_baseline], orig_sr=ORIGINAL_SR, target_sr=16000)
-
-            pesq_original = pesq(16000, audio_orig_baseline_16k, audio_baseline_16k, 'wb')
-
-            # Calculate baseline STOI
-            stoi_original = stoi(audio_waveform_orig_trimmed[:min_len_baseline],
-                               audio_orig_reprocessed_back[:min_len_baseline],
-                               ORIGINAL_SR, extended=False)
-
-        except Exception as e:
-            print(f"  Warning: Original baseline calculation failed: {e}")
-            # Use theoretical maximums as fallback
+        # Calculate PESQ and STOI for ORIGINAL audio baseline
+        # If we have access to original WAV files, use those for accurate baseline
+        if original_wav_dir is not None:
+            # Try to find the original WAV file
+            original_wav_path = os.path.join(original_wav_dir, f"{file_id}.wav")
+            if os.path.exists(original_wav_path):
+                print(f"  📁 Found original WAV file, calculating true baseline...")
+                pesq_original, stoi_original = calculate_original_baseline(original_wav_path, original_path)
+                if pesq_original is None:
+                    # Fallback to theoretical max
+                    pesq_original = 4.5
+                    stoi_original = 1.0
+                    print(f"  ⚠️  Baseline calculation failed, using theoretical max")
+            else:
+                print(f"  ⚠️  Original WAV not found, using theoretical max as baseline")
+                pesq_original = 4.5
+                stoi_original = 1.0
+        else:
+            # No WAV directory provided, use theoretical maximum
+            print(f"  ℹ️  No WAV directory provided, using theoretical max as baseline")
             pesq_original = 4.5
             stoi_original = 1.0
 
         print(f"  📊 Reconstructed - PESQ: {pesq_value:.3f}, STOI: {stoi_value:.4f}" if pesq_value is not None else "  📊 Reconstructed - PESQ: N/A, STOI: N/A")
-        print(f"  📊 Original Baseline - PESQ: {pesq_original:.3f}, STOI: {stoi_original:.4f}" if pesq_original is not None else "  📊 Original Baseline - N/A")
+        print(f"  📊 Original Baseline - PESQ: {pesq_original:.3f}, STOI: {stoi_original:.4f}")
 
     return pesq_value, stoi_value, pesq_original, stoi_original
 
@@ -213,10 +260,17 @@ if __name__ == "__main__":
     
     # Path to the *original* spectrograms
     parser.add_argument(
-        "-orig_dir", "--original_dir", 
-        type=str, 
+        "-orig_dir", "--original_dir",
+        type=str,
         default='./dataset/ljspeech_spectrograms/',
         help="Path to the directory with original .npy spectrograms."
+    )
+
+    parser.add_argument(
+        "--original_wav_dir",
+        type=str,
+        default=None,
+        help="(Optional) Path to directory with original .wav files for accurate baseline calculation."
     )
     
     # Path to the *results* of a train_subset run
@@ -273,7 +327,9 @@ if __name__ == "__main__":
                 print(f"  Warning: Original file not found for {file_id}. Skipping.")
                 continue
 
-            pesq_val, stoi_val, pesq_orig, stoi_orig = analyze_file(original_path, recon_path, args.output_dir)
+            pesq_val, stoi_val, pesq_orig, stoi_orig = analyze_file(
+                original_path, recon_path, args.output_dir, args.original_wav_dir
+            )
 
             if pesq_val is not None and stoi_val is not None:
                 file_ids.append(file_id)
