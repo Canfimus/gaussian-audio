@@ -6,14 +6,17 @@ import yaml
 import numpy as np
 import torch
 import sys
+import os
 import torch.nn.functional as F
 from pytorch_msssim import ms_ssim
-from utils import * # Make sure this import is correct
-from tqdm import tqdm
 import random
 import torchvision.transforms as transforms
 import glob # Needed to find .npy files
-import os # Needed to join paths
+from tqdm import tqdm
+
+# Add parent directory to path to import from src
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src.utils import * # Import from reorganized src directory
 
 # Define the number of files for our subset
 SUBSET_SIZE = 3  # Using 3 for debugging
@@ -50,7 +53,7 @@ class SimpleTrainer2d:
         
         if model_name == "GaussianImage_Cholesky":
             # Import our 3-channel (fixed) model
-            from gaussianimage_audio_v2 import GaussianImage_Cholesky
+            from src.models.gaussianimage_audio_v2 import GaussianImage_Cholesky
             # Check if quantization is enabled
             use_quantize = args.quantize if hasattr(args, 'quantize') else False
             self.gaussian_model = GaussianImage_Cholesky(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W,
@@ -61,15 +64,15 @@ class SimpleTrainer2d:
         self.logwriter = LogWriter(self.log_dir)
 
         if model_path is not None:
-            print(f"טוען מודל שמור מ: {model_path}")
+            print(f"Loading saved model from: {model_path}")
             checkpoint = torch.load(model_path, map_location=self.device)
             model_dict = self.gaussian_model.state_dict()
             pretrained_dict = {k: v for k, v in checkpoint.items() if k in model_dict}
             model_dict.update(pretrained_dict)
             self.gaussian_model.load_state_dict(model_dict)
 
-    def train(self):     
-        progress_bar = tqdm(range(1, self.iterations+1), desc=f"מאמן את {self.image_name}", leave=False) # 'leave=False' makes the bar disappear after
+    def train(self):
+        progress_bar = tqdm(range(1, self.iterations+1), desc=f"Training {self.image_name}", leave=False) # 'leave=False' makes the bar disappear after
         self.gaussian_model.train()
         start_time = time.time()
         for iter in range(1, self.iterations+1):
@@ -90,7 +93,7 @@ class SimpleTrainer2d:
                 _ = self.gaussian_model()
             test_end_time = (time.time() - test_start_time)/100
 
-        self.logwriter.write(f"אימון הושלם תוך {end_time:.4f} שניות, זמן רינדור: {test_end_time:.8f} שניות, FPS:{1/test_end_time:.4f}")
+        self.logwriter.write(f"Training completed in {end_time:.4f} seconds, render time: {test_end_time:.8f} seconds, FPS:{1/test_end_time:.4f}")
         torch.save(self.gaussian_model.state_dict(), self.log_dir / "gaussian_model.pth.tar")
         
         # We don't need to save training.npy for a subset test
@@ -234,27 +237,27 @@ def main(argv):
         logwriter = LogWriter(Path(f"./checkpoints/{args.data_name}/{args.iterations}_{num_pts}"))
     
     # Find all .npy files in the dataset directory
-    print(f"מחפש קבצי .npy בנתיב: {args.dataset}")
+    print(f"Searching for .npy files in path: {args.dataset}")
     all_image_paths = sorted(glob.glob(os.path.join(args.dataset, '*.npy')))
-    
+
     if len(all_image_paths) == 0:
-        print(f"שגיאה: לא נמצאו קבצי .npy ב- {args.dataset}")
-        print("אנא ודא שהרצת את preprocess.py והנתיב נכון.")
+        print(f"Error: No .npy files found in {args.dataset}")
+        print("Please ensure you ran preprocess.py and the path is correct.")
         return
 
     # --- THIS IS THE SUBSET LOGIC ---
     # Select only the first SUBSET_SIZE files
     subset_paths = all_image_paths[:SUBSET_SIZE]
-    print(f"נמצאו {len(all_image_paths)} קבצים. רץ על תת-קבוצה של {len(subset_paths)} קבצים.")
+    print(f"Found {len(all_image_paths)} files. Running on subset of {len(subset_paths)} files.")
     # --- END OF SUBSET LOGIC ---
 
     psnrs, ms_ssims, training_times, eval_fpses = [], [], [], []
-    
+
     # Use tqdm for the outer loop as well, to see progress through files
-    for image_path_str in tqdm(subset_paths, desc="מעבד קבצים בתת-הקבוצה"):
+    for image_path_str in tqdm(subset_paths, desc="Processing files in subset"):
         image_path = Path(image_path_str)
         image_name = image_path.stem
-        logwriter.write(f"\n--- מתחיל אימון עבור: {image_name} ---")
+        logwriter.write(f"\n--- Starting training for: {image_name} ---")
 
         # Calculate num_points based on gaussians_per_second if specified
         if args.gaussians_per_second is not None:
@@ -290,8 +293,8 @@ def main(argv):
         training_times.append(training_time) 
         eval_fpses.append(eval_fps)
         
-        logwriter.write(f"--- סיום עבור: {image_name} ---")
-        logwriter.write(f"PSNR (לא אמין): {psnr:.4f}, MS-SSIM: {ms_ssim:.4f}, זמן אימון: {training_time:.4f} שניות, FPS: {eval_fps:.4f}")
+        logwriter.write(f"--- Finished for: {image_name} ---")
+        logwriter.write(f"PSNR (unreliable): {psnr:.4f}, MS-SSIM: {ms_ssim:.4f}, training time: {training_time:.4f} seconds, FPS: {eval_fps:.4f}")
 
     # Calculate and log averages
     avg_psnr = torch.tensor(psnrs).mean().item()
@@ -299,11 +302,11 @@ def main(argv):
     avg_training_time = torch.tensor(training_times).mean().item()
     avg_eval_fps = torch.tensor(eval_fpses).mean().item()
 
-    logwriter.write(f"\n--- סיכום תת-הקבוצה ({len(subset_paths)} קבצים) ---")
-    logwriter.write(f"PSNR ממוצע (לא אמין): {avg_psnr:.4f}")
-    logwriter.write(f"MS-SSIM ממוצע: {avg_ms_ssim:.4f}")
-    logwriter.write(f"זמן אימון ממוצע לקובץ: {avg_training_time:.4f} שניות")
-    logwriter.write(f"FPS ממוצע לרינדור: {avg_eval_fps:.4f}")
+    logwriter.write(f"\n--- Subset summary ({len(subset_paths)} files) ---")
+    logwriter.write(f"Average PSNR (unreliable): {avg_psnr:.4f}")
+    logwriter.write(f"Average MS-SSIM: {avg_ms_ssim:.4f}")
+    logwriter.write(f"Average training time per file: {avg_training_time:.4f} seconds")
+    logwriter.write(f"Average FPS for rendering: {avg_eval_fps:.4f}")
 
 if __name__ == "__main__":
     main(sys.argv[1:])

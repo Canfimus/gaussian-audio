@@ -40,7 +40,7 @@ def preprocess_amp_phase(input_dir, output_dir):
         return True
 
     cmd = [
-        "python", "preprocess.py",
+        "python", "scripts/preprocess.py",
         "--mode", "amp_phase",
         "--input_dir", input_dir,
         "--output_dir", output_dir
@@ -68,7 +68,7 @@ def run_training(gps_rate, iterations, dataset_dir, data_name, use_quantization=
     print(f"{'='*80}\n")
 
     cmd = [
-        "python", "train_subset.py",
+        "python", "scripts/train_subset.py",
         "--dataset", dataset_dir,
         "--data_name", data_name,
         "--iterations", str(iterations),
@@ -103,7 +103,7 @@ def run_analysis(run_dir, output_dir, original_spec_dir, original_wav_dir):
     print(f"{'='*80}\n")
 
     cmd = [
-        "python", "analyze_subset_fixed.py",
+        "python", "analysis/analyze_subset_fixed.py",
         "--run_dir", run_dir,
         "--output_dir", output_dir,
         "--original_dir", original_spec_dir,
