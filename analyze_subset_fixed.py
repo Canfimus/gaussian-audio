@@ -49,10 +49,10 @@ def calculate_original_baseline(original_audio_path, original_spec_path):
     This measures the quality ceiling from the spectrogram representation itself.
     """
     try:
-        # Load original WAV file
+        # Load original WAV file (do NOT normalize yet)
         audio_original_wav, sr_orig = librosa.load(original_audio_path, sr=None)
 
-        # Load spectrogram and reconstruct audio
+        # Load spectrogram and reconstruct audio (do NOT normalize yet)
         spec_ri = np.load(original_spec_path)
         S_complex = spec_ri[..., 0] + 1j * spec_ri[..., 1]
         audio_from_spec = librosa.istft(S_complex, n_fft=N_FFT, hop_length=HOP_LENGTH, length=None)
@@ -62,21 +62,18 @@ def calculate_original_baseline(original_audio_path, original_spec_path):
         audio_original_wav = audio_original_wav[:min_len]
         audio_from_spec = audio_from_spec[:min_len]
 
-        # Normalize both
-        max_val_orig = np.abs(audio_original_wav).max()
-        if max_val_orig > 0:
-            audio_original_wav = audio_original_wav / max_val_orig * 0.95
-
-        max_val_spec = np.abs(audio_from_spec).max()
-        if max_val_spec > 0:
-            audio_from_spec = audio_from_spec / max_val_spec * 0.95
+        # DON'T normalize - preserve amplitude relationships for accurate metrics!
+        # PESQ and STOI handle level differences internally
 
         # Calculate PESQ
         audio_orig_16k = librosa.resample(audio_original_wav, orig_sr=sr_orig, target_sr=16000)
         audio_spec_16k = librosa.resample(audio_from_spec, orig_sr=sr_orig, target_sr=16000)
+
+        # PESQ: pesq(sample_rate, reference=original_wav, degraded=spec_reconstruction, mode)
         pesq_baseline = pesq(16000, audio_orig_16k, audio_spec_16k, 'wb')
 
         # Calculate STOI
+        # STOI: stoi(clean_reference=original_wav, degraded=spec_reconstruction, sample_rate, extended)
         stoi_baseline = stoi(audio_original_wav, audio_from_spec, sr_orig, extended=False)
 
         return pesq_baseline, stoi_baseline
@@ -172,30 +169,16 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
                                     hop_length=HOP_LENGTH,
                                     length=None)  # Let librosa determine length
 
-    # Normalize audio to prevent clipping
-    max_val = np.abs(audio_waveform).max()
-    if max_val > 0:
-        audio_waveform = audio_waveform / max_val * 0.95
-
-    # Save as .wav file
-    sf.write(audio_output_path, audio_waveform, ORIGINAL_SR)
-    print(f"  ✅ Audio saved to: {audio_output_path}")
-
-    # Also save original for comparison and calculate metrics
+    # Also reconstruct original for comparison
     audio_waveform_orig = None
     if S_complex_original is not None:
-        audio_original_path = os.path.join(base_output_path, 'audio', f"{file_id}_original.wav")
         audio_waveform_orig = librosa.istft(S_complex_original,
                                             n_fft=N_FFT,
                                             hop_length=HOP_LENGTH,
                                             length=None)
-        max_val_orig = np.abs(audio_waveform_orig).max()
-        if max_val_orig > 0:
-            audio_waveform_orig = audio_waveform_orig / max_val_orig * 0.95
-        sf.write(audio_original_path, audio_waveform_orig, ORIGINAL_SR)
-        print(f"  ✅ Original audio saved to: {audio_original_path}")
 
-    # --- 5. Calculate audio quality metrics (PESQ and STOI) ---
+    # --- 5. Calculate audio quality metrics (PESQ and STOI) BEFORE normalization ---
+    # IMPORTANT: Calculate metrics on raw audio before normalization to preserve amplitude relationships
     pesq_value = None
     stoi_value = None
     pesq_original = None
@@ -210,10 +193,12 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
         # Calculate PESQ and STOI for RECONSTRUCTED audio
         try:
             # Resample to 16kHz for PESQ (wideband mode)
+            # Note: Using raw audio before normalization
             audio_orig_16k = librosa.resample(audio_waveform_orig_trimmed, orig_sr=ORIGINAL_SR, target_sr=16000)
             audio_recon_16k = librosa.resample(audio_waveform_trimmed, orig_sr=ORIGINAL_SR, target_sr=16000)
 
-            # PESQ returns a score from -0.5 to 4.5 (higher is better)
+            # PESQ: pesq(sample_rate, reference, degraded, mode)
+            # reference = original, degraded = reconstructed
             pesq_value = pesq(16000, audio_orig_16k, audio_recon_16k, 'wb')
         except Exception as e:
             print(f"  Warning: PESQ calculation failed: {e}")
@@ -221,6 +206,8 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
 
         # Calculate STOI (Short-Time Objective Intelligibility)
         try:
+            # STOI: stoi(clean_reference, degraded, sample_rate, extended)
+            # clean_reference = original, degraded = reconstructed
             stoi_value = stoi(audio_waveform_orig_trimmed, audio_waveform_trimmed, ORIGINAL_SR, extended=False)
         except Exception as e:
             print(f"  Warning: STOI calculation failed: {e}")
@@ -251,6 +238,29 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
 
         print(f"  📊 Reconstructed - PESQ: {pesq_value:.3f}, STOI: {stoi_value:.4f}" if pesq_value is not None else "  📊 Reconstructed - PESQ: N/A, STOI: N/A")
         print(f"  📊 Original Baseline - PESQ: {pesq_original:.3f}, STOI: {stoi_original:.4f}")
+
+    # --- 6. NOW normalize and save audio files (AFTER metrics calculation) ---
+    # Normalize reconstructed audio for saving
+    max_val = np.abs(audio_waveform).max()
+    if max_val > 0:
+        audio_waveform_normalized = audio_waveform / max_val * 0.95
+    else:
+        audio_waveform_normalized = audio_waveform
+
+    # Save normalized reconstructed audio as .wav file
+    sf.write(audio_output_path, audio_waveform_normalized, ORIGINAL_SR)
+    print(f"  ✅ Audio saved to: {audio_output_path}")
+
+    # Normalize and save original audio
+    if audio_waveform_orig is not None:
+        audio_original_path = os.path.join(base_output_path, 'audio', f"{file_id}_original.wav")
+        max_val_orig = np.abs(audio_waveform_orig).max()
+        if max_val_orig > 0:
+            audio_waveform_orig_normalized = audio_waveform_orig / max_val_orig * 0.95
+        else:
+            audio_waveform_orig_normalized = audio_waveform_orig
+        sf.write(audio_original_path, audio_waveform_orig_normalized, ORIGINAL_SR)
+        print(f"  ✅ Original audio saved to: {audio_original_path}")
 
     return pesq_value, stoi_value, pesq_original, stoi_original
 
