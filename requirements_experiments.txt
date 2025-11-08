@@ -12,6 +12,9 @@ soundfile>=0.10.0
 pystoi>=0.3.3
 pesq>=0.0.4
 
+# Speech quality metrics
+speechmetrics>=1.0.0  # Includes UTMOS and other metrics
+
 # Image quality metrics
 pytorch-msssim>=0.2.1
 

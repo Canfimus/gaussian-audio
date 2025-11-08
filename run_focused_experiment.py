@@ -120,7 +120,7 @@ def run_analysis(run_dir, output_dir, original_dir):
 def plot_focused_results(comparison_df, experiments_dir):
     """
     Create visualization plots focused on the 2000-5000 gps range.
-    Shows PESQ, STOI, and compression ratio.
+    Shows PESQ, STOI, UTMOS, and compression ratio.
     """
     if comparison_df is None or len(comparison_df) == 0:
         print("⚠️  No data to plot")
@@ -130,14 +130,20 @@ def plot_focused_results(comparison_df, experiments_dir):
     print("Creating focused visualization plots...")
     print(f"{'='*80}\n")
 
-    # Create figure with 3 rows, 2 columns
-    fig = plt.figure(figsize=(18, 16))
-    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+    # Check if UTMOS data is available
+    has_utmos = 'avg_utmos' in comparison_df and comparison_df['avg_utmos'].notna().any()
+
+    # Create figure with 4 rows, 2 columns if UTMOS available, else 3x2
+    num_rows = 4 if has_utmos else 3
+    fig = plt.figure(figsize=(18, num_rows * 5.5))
+    gs = fig.add_gridspec(num_rows, 2, hspace=0.3, wspace=0.3)
 
     gps_rates = comparison_df['gaussians_per_second'].values
     pesq_values = comparison_df['avg_pesq'].values
     stoi_values = comparison_df['avg_stoi'].values
     compression_ratios = comparison_df['compression_ratio'].values
+    if has_utmos:
+        utmos_values = comparison_df['avg_utmos'].values
 
     # Get actual measured baseline values (average across all experiments)
     if 'avg_pesq_original' in comparison_df and 'avg_stoi_original' in comparison_df:
@@ -146,12 +152,19 @@ def plot_focused_results(comparison_df, experiments_dir):
         # Use the average of all measured baselines
         BASELINE_PESQ = np.mean(pesq_original_values)
         BASELINE_STOI = np.mean(stoi_original_values)
+        if has_utmos and 'avg_utmos_original' in comparison_df:
+            utmos_original_values = comparison_df['avg_utmos_original'].values
+            BASELINE_UTMOS = np.mean([v for v in utmos_original_values if v is not None and not np.isnan(v)]) if any(v is not None and not np.isnan(v) for v in utmos_original_values) else None
+        else:
+            BASELINE_UTMOS = None
     else:
         # Fallback to theoretical maximums
         BASELINE_PESQ = 4.5
         BASELINE_STOI = 1.0
+        BASELINE_UTMOS = None
 
-    print(f"Using measured baseline: PESQ={BASELINE_PESQ:.3f}, STOI={BASELINE_STOI:.4f}")
+    utmos_str = f", UTMOS={BASELINE_UTMOS:.3f}" if BASELINE_UTMOS is not None else ""
+    print(f"Using measured baseline: PESQ={BASELINE_PESQ:.3f}, STOI={BASELINE_STOI:.4f}{utmos_str}")
 
     # Plot 1: PESQ vs Gaussian Rate (focused range)
     ax1 = fig.add_subplot(gs[0, 0])
@@ -237,30 +250,82 @@ def plot_focused_results(comparison_df, experiments_dir):
         ax5.annotate(f'{int(gps)}', (x, y), textcoords="offset points",
                     xytext=(0,-15), ha='center', fontsize=9)
 
-    # Plot 6: Combined metrics bar chart
-    ax6 = fig.add_subplot(gs[2, 1])
+    # Plot 6 & 7: UTMOS plots (if available)
+    if has_utmos:
+        # Plot 6: UTMOS vs Gaussian Rate
+        ax6 = fig.add_subplot(gs[2, 0])
+        ax6.plot(gps_rates, utmos_values, 'o-', linewidth=2.5, markersize=10, color='#18A558', label='Reconstructed', zorder=3)
+        if BASELINE_UTMOS is not None:
+            ax6.axhline(y=BASELINE_UTMOS, color='green', linestyle='--', linewidth=2, alpha=0.6, label=f'Original Baseline ({BASELINE_UTMOS:.3f})', zorder=2)
+        ax6.set_xlabel('Gaussians per Second', fontsize=13, fontweight='bold')
+        ax6.set_ylabel('Average UTMOS', fontsize=13, fontweight='bold')
+        ax6.set_title('Audio UTMOS vs Gaussian Rate (Focused)', fontsize=15, fontweight='bold')
+        ax6.grid(True, alpha=0.3, zorder=1)
+        ax6.legend(loc='lower right', fontsize=11)
+        ax6.set_ylim([0, 5.0])
+
+        # Add value labels
+        for x, y in zip(gps_rates, utmos_values):
+            if not np.isnan(y):
+                ax6.annotate(f'{y:.2f}', (x, y), textcoords="offset points",
+                            xytext=(0,10), ha='center', fontsize=10, fontweight='bold')
+
+        # Plot 7: UTMOS vs Compression Trade-off
+        ax7 = fig.add_subplot(gs[2, 1])
+        scatter3 = ax7.scatter(compression_ratios, utmos_values, s=200, c=gps_rates,
+                              cmap='viridis', edgecolors='black', linewidth=2, zorder=3)
+        if BASELINE_UTMOS is not None:
+            ax7.axhline(y=BASELINE_UTMOS, color='green', linestyle='--', linewidth=2, alpha=0.4, label=f'Baseline UTMOS ({BASELINE_UTMOS:.3f})', zorder=2)
+        ax7.set_xlabel('Compression Ratio (X:1)', fontsize=13, fontweight='bold')
+        ax7.set_ylabel('Average UTMOS', fontsize=13, fontweight='bold')
+        ax7.set_title('UTMOS vs Compression Trade-off', fontsize=15, fontweight='bold')
+        ax7.grid(True, alpha=0.3, zorder=1)
+        cbar3 = plt.colorbar(scatter3, ax=ax7)
+        cbar3.set_label('Gaussians/sec', fontsize=11, fontweight='bold')
+        ax7.legend(loc='lower right', fontsize=11)
+        ax7.set_ylim([0, 5.0])
+
+        # Annotate points with gps values
+        for x, y, gps in zip(compression_ratios, utmos_values, gps_rates):
+            if not np.isnan(y):
+                ax7.annotate(f'{int(gps)}', (x, y), textcoords="offset points",
+                            xytext=(0,-15), ha='center', fontsize=9)
+
+    # Plot 8 (or 6 if no UTMOS): Combined metrics bar chart
+    plot_row = 3 if has_utmos else 2
+    ax_combined = fig.add_subplot(gs[plot_row, 1])
     x_pos = np.arange(len(gps_rates))
-    width = 0.25
+    width = 0.2 if has_utmos else 0.25
 
     # Normalize metrics to 0-1 for comparison
     pesq_norm = pesq_values / BASELINE_PESQ
     stoi_norm = stoi_values / BASELINE_STOI
     comp_norm = compression_ratios / compression_ratios.max()
 
-    ax6.bar(x_pos - width, pesq_norm, width, label='PESQ (norm)', color='#2E86AB', alpha=0.8)
-    ax6.bar(x_pos, stoi_norm, width, label='STOI (norm)', color='#A23B72', alpha=0.8)
-    ax6.bar(x_pos + width, comp_norm, width, label='Compression (norm)', color='#F18F01', alpha=0.8)
+    if has_utmos and BASELINE_UTMOS is not None:
+        utmos_norm = utmos_values / BASELINE_UTMOS
+        ax_combined.bar(x_pos - 1.5*width, pesq_norm, width, label='PESQ (norm)', color='#2E86AB', alpha=0.8)
+        ax_combined.bar(x_pos - 0.5*width, stoi_norm, width, label='STOI (norm)', color='#A23B72', alpha=0.8)
+        ax_combined.bar(x_pos + 0.5*width, utmos_norm, width, label='UTMOS (norm)', color='#18A558', alpha=0.8)
+        ax_combined.bar(x_pos + 1.5*width, comp_norm, width, label='Compression (norm)', color='#F18F01', alpha=0.8)
+    else:
+        ax_combined.bar(x_pos - width, pesq_norm, width, label='PESQ (norm)', color='#2E86AB', alpha=0.8)
+        ax_combined.bar(x_pos, stoi_norm, width, label='STOI (norm)', color='#A23B72', alpha=0.8)
+        ax_combined.bar(x_pos + width, comp_norm, width, label='Compression (norm)', color='#F18F01', alpha=0.8)
 
-    ax6.set_xlabel('Gaussians per Second', fontsize=13, fontweight='bold')
-    ax6.set_ylabel('Normalized Score (0-1)', fontsize=13, fontweight='bold')
-    ax6.set_title('All Metrics Comparison (Normalized)', fontsize=15, fontweight='bold')
-    ax6.set_xticks(x_pos)
-    ax6.set_xticklabels([f'{int(g)}' for g in gps_rates])
-    ax6.legend(loc='lower right', fontsize=11)
-    ax6.grid(True, alpha=0.3, axis='y')
-    ax6.set_ylim([0, 1.1])
+    ax_combined.set_xlabel('Gaussians per Second', fontsize=13, fontweight='bold')
+    ax_combined.set_ylabel('Normalized Score (0-1)', fontsize=13, fontweight='bold')
+    ax_combined.set_title('All Metrics Comparison (Normalized)', fontsize=15, fontweight='bold')
+    ax_combined.set_xticks(x_pos)
+    ax_combined.set_xticklabels([f'{int(g)}' for g in gps_rates])
+    ax_combined.legend(loc='lower right', fontsize=11)
+    ax_combined.grid(True, alpha=0.3, axis='y')
+    ax_combined.set_ylim([0, 1.1])
 
-    plt.suptitle(f'Focused Experiment: 2000-5000 gps with Quantization\n(Baseline: PESQ={BASELINE_PESQ:.2f}, STOI={BASELINE_STOI:.3f})',
+    baseline_str = f'PESQ={BASELINE_PESQ:.2f}, STOI={BASELINE_STOI:.3f}'
+    if has_utmos and BASELINE_UTMOS is not None:
+        baseline_str += f', UTMOS={BASELINE_UTMOS:.3f}'
+    plt.suptitle(f'Focused Experiment: 2000-5000 gps with Quantization\n(Baseline: {baseline_str})',
                  fontsize=18, fontweight='bold', y=0.998)
 
     # Save the plot
@@ -294,14 +359,17 @@ def collect_all_metrics(experiments_dir, original_dir):
                 if not avg_row.empty:
                     avg_pesq = avg_row['pesq'].values[0]
                     avg_stoi = avg_row['stoi'].values[0]
+                    avg_utmos = avg_row['utmos'].values[0] if 'utmos' in avg_row and avg_row['utmos'].notna().all() else None
 
                     # Get original baseline values (if available)
                     if 'pesq_original' in avg_row and 'stoi_original' in avg_row:
                         avg_pesq_original = avg_row['pesq_original'].values[0]
                         avg_stoi_original = avg_row['stoi_original'].values[0]
+                        avg_utmos_original = avg_row['utmos_original'].values[0] if 'utmos_original' in avg_row and avg_row['utmos_original'].notna().all() else None
                     else:
                         avg_pesq_original = 4.5  # Fallback to theoretical max
                         avg_stoi_original = 1.0
+                        avg_utmos_original = None
 
                     # Calculate compression ratio
                     checkpoint_dir = f"./checkpoints/{DATA_NAME}/GaussianImage_Cholesky_{ITERATIONS}_{gps_rate}gps"
@@ -315,12 +383,15 @@ def collect_all_metrics(experiments_dir, original_dir):
                         'gaussians_per_second': gps_rate,
                         'avg_pesq': avg_pesq,
                         'avg_stoi': avg_stoi,
+                        'avg_utmos': avg_utmos,
                         'avg_pesq_original': avg_pesq_original,
                         'avg_stoi_original': avg_stoi_original,
+                        'avg_utmos_original': avg_utmos_original,
                         'compression_ratio': comp_ratio,
                         'space_savings_percent': space_savings
                     })
-                    print(f"  ✅ {gps_rate} gps: PESQ={avg_pesq:.3f}, STOI={avg_stoi:.4f}, Compression={comp_ratio:.1f}x ({space_savings:.1f}% savings)")
+                    utmos_str = f", UTMOS={avg_utmos:.3f}" if avg_utmos is not None else ""
+                    print(f"  ✅ {gps_rate} gps: PESQ={avg_pesq:.3f}, STOI={avg_stoi:.4f}{utmos_str}, Compression={comp_ratio:.1f}x ({space_savings:.1f}% savings)")
                 else:
                     print(f"  ⚠️  No average metrics found for {gps_rate} gps")
             except Exception as e:

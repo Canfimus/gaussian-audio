@@ -12,21 +12,46 @@ warnings.filterwarnings('ignore')
 from pystoi import stoi
 from pesq import pesq
 
+# Import UTMOS for speech quality assessment
+try:
+    from speechmetrics.relative import dnsmos, bvcc, utmos
+    UTMOS_AVAILABLE = True
+except ImportError:
+    UTMOS_AVAILABLE = False
+    print("⚠️  Warning: speechmetrics not available. UTMOS metric will not be calculated.")
+    print("   Install with: pip install speechmetrics")
+
 # --- 1. Spectrogram Parameters (Must match preprocess.py) ---
 N_FFT = 1024
 HOP_LENGTH = 256
 ORIGINAL_SR = 22050
+REPRESENTATION_MODE = 'real_imag'  # Can be overridden by command-line argument
 
-def load_and_convert_to_db(npy_path):
-    """Loads a 2-ch (Real, Imag) .npy file and converts to log-magnitude (dB)."""
+def load_and_convert_to_db(npy_path, mode='real_imag'):
+    """
+    Loads a 2-channel .npy file and converts to log-magnitude (dB).
+
+    Args:
+        npy_path: Path to .npy file
+        mode: Representation mode - 'real_imag' or 'amp_phase'
+    """
     try:
-        spec_ri = np.load(npy_path)
+        spec_data = np.load(npy_path)
     except Exception as e:
         print(f"  Error loading file: {npy_path} | {e}")
         return None, None
-    
-    # Reconstruct the complex spectrogram
-    S_complex = spec_ri[..., 0] + 1j * spec_ri[..., 1]
+
+    # Reconstruct the complex spectrogram based on mode
+    if mode == 'real_imag':
+        # Real + Imaginary representation
+        S_complex = spec_data[..., 0] + 1j * spec_data[..., 1]
+    elif mode == 'amp_phase':
+        # Amplitude + Phase representation
+        amplitude = spec_data[..., 0]
+        phase = spec_data[..., 1]
+        S_complex = amplitude * np.exp(1j * phase)
+    else:
+        raise ValueError(f"Unknown representation mode: {mode}")
     
     # Convert to magnitude
     S_magnitude = np.abs(S_complex)
@@ -40,21 +65,35 @@ def load_and_convert_to_db(npy_path):
     
     return S_db, S_complex  # Return complex spec for audio
 
-def calculate_original_baseline(original_audio_path, original_spec_path):
+def calculate_original_baseline(original_audio_path, original_spec_path, mode='real_imag'):
     """
-    Calculate the baseline PESQ/STOI by comparing:
+    Calculate the baseline PESQ/STOI/UTMOS by comparing:
     - Original WAV file
     - vs Audio reconstructed from spectrogram (STFT→ISTFT)
 
     This measures the quality ceiling from the spectrogram representation itself.
+
+    Args:
+        original_audio_path: Path to original WAV file
+        original_spec_path: Path to original spectrogram .npy file
+        mode: Representation mode - 'real_imag' or 'amp_phase'
     """
     try:
         # Load original WAV file (do NOT normalize yet)
         audio_original_wav, sr_orig = librosa.load(original_audio_path, sr=None)
 
         # Load spectrogram and reconstruct audio (do NOT normalize yet)
-        spec_ri = np.load(original_spec_path)
-        S_complex = spec_ri[..., 0] + 1j * spec_ri[..., 1]
+        spec_data = np.load(original_spec_path)
+
+        # Reconstruct complex spectrogram based on mode
+        if mode == 'real_imag':
+            S_complex = spec_data[..., 0] + 1j * spec_data[..., 1]
+        elif mode == 'amp_phase':
+            amplitude = spec_data[..., 0]
+            phase = spec_data[..., 1]
+            S_complex = amplitude * np.exp(1j * phase)
+        else:
+            raise ValueError(f"Unknown representation mode: {mode}")
         audio_from_spec = librosa.istft(S_complex, n_fft=N_FFT, hop_length=HOP_LENGTH, length=None)
 
         # Ensure both have same length
@@ -76,36 +115,47 @@ def calculate_original_baseline(original_audio_path, original_spec_path):
         # STOI: stoi(clean_reference=original_wav, degraded=spec_reconstruction, sample_rate, extended)
         stoi_baseline = stoi(audio_original_wav, audio_from_spec, sr_orig, extended=False)
 
-        return pesq_baseline, stoi_baseline
+        # Calculate UTMOS if available
+        utmos_baseline = None
+        if UTMOS_AVAILABLE:
+            try:
+                # Save temporary files for UTMOS (it requires file paths)
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_spec:
+                    sf.write(tmp_spec.name, audio_spec_16k, 16000)
+                    # UTMOS expects 16kHz audio
+                    utmos_score = utmos(tmp_spec.name)
+                    utmos_baseline = utmos_score['utmos'][0] if isinstance(utmos_score, dict) and 'utmos' in utmos_score else None
+                    os.unlink(tmp_spec.name)
+            except Exception as e:
+                print(f"  Warning: UTMOS baseline calculation failed: {e}")
+                utmos_baseline = None
+
+        return pesq_baseline, stoi_baseline, utmos_baseline
 
     except Exception as e:
         print(f"  Warning: Could not calculate baseline from WAV file: {e}")
-        return None, None
+        return None, None, None
 
 
-def analyze_file(original_path, reconstructed_path, base_output_path, original_wav_dir=None):
+def analyze_file(original_path, reconstructed_path, base_output_path, original_wav_dir=None, mode='real_imag'):
     """
     Analyzes a single file: creates a plot and an audio file.
-    Returns PESQ and STOI metrics for both reconstructed and original baseline.
+    Returns PESQ, STOI, and UTMOS metrics for both reconstructed and original baseline.
 
     Args:
         original_path: Path to original spectrogram .npy
         reconstructed_path: Path to reconstructed spectrogram .npy
         base_output_path: Output directory
         original_wav_dir: Optional directory containing original .wav files for baseline calculation
-    """
-    file_id = os.path.basename(original_path).split('.')[0]
-    print(f"--- Processing: {file_id} ---")
-    """
-    Analyzes a single file: creates a plot and an audio file.
-    Returns PSNR and STOI metrics.
+        mode: Representation mode - 'real_imag' or 'amp_phase'
     """
     file_id = os.path.basename(original_path).split('.')[0]
     print(f"--- Processing: {file_id} ---")
 
     # --- 1. Load and prepare data ---
-    spec_db_original, S_complex_original = load_and_convert_to_db(original_path)
-    spec_db_reconstructed, S_complex_reconstructed = load_and_convert_to_db(reconstructed_path)
+    spec_db_original, S_complex_original = load_and_convert_to_db(original_path, mode=mode)
+    spec_db_reconstructed, S_complex_reconstructed = load_and_convert_to_db(reconstructed_path, mode=mode)
 
     if spec_db_original is None or spec_db_reconstructed is None:
         print(f"  Skipping file {file_id} due to loading error.")
@@ -177,12 +227,14 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
                                             hop_length=HOP_LENGTH,
                                             length=None)
 
-    # --- 5. Calculate audio quality metrics (PESQ and STOI) BEFORE normalization ---
+    # --- 5. Calculate audio quality metrics (PESQ, STOI, UTMOS) BEFORE normalization ---
     # IMPORTANT: Calculate metrics on raw audio before normalization to preserve amplitude relationships
     pesq_value = None
     stoi_value = None
+    utmos_value = None
     pesq_original = None
     stoi_original = None
+    utmos_original = None
 
     if audio_waveform_orig is not None:
         # Ensure both waveforms have the same length
@@ -213,31 +265,49 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
             print(f"  Warning: STOI calculation failed: {e}")
             stoi_value = None
 
-        # Calculate PESQ and STOI for ORIGINAL audio baseline
+        # Calculate UTMOS for RECONSTRUCTED audio
+        if UTMOS_AVAILABLE:
+            try:
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_recon:
+                    sf.write(tmp_recon.name, audio_recon_16k, 16000)
+                    utmos_score = utmos(tmp_recon.name)
+                    utmos_value = utmos_score['utmos'][0] if isinstance(utmos_score, dict) and 'utmos' in utmos_score else None
+                    os.unlink(tmp_recon.name)
+            except Exception as e:
+                print(f"  Warning: UTMOS calculation failed: {e}")
+                utmos_value = None
+
+        # Calculate PESQ, STOI, and UTMOS for ORIGINAL audio baseline
         # If we have access to original WAV files, use those for accurate baseline
         if original_wav_dir is not None:
             # Try to find the original WAV file
             original_wav_path = os.path.join(original_wav_dir, f"{file_id}.wav")
             if os.path.exists(original_wav_path):
                 print(f"  📁 Found original WAV file, calculating true baseline...")
-                pesq_original, stoi_original = calculate_original_baseline(original_wav_path, original_path)
+                pesq_original, stoi_original, utmos_original = calculate_original_baseline(original_wav_path, original_path, mode=mode)
                 if pesq_original is None:
                     # Fallback to theoretical max
                     pesq_original = 4.5
                     stoi_original = 1.0
+                    utmos_original = None
                     print(f"  ⚠️  Baseline calculation failed, using theoretical max")
             else:
                 print(f"  ⚠️  Original WAV not found, using theoretical max as baseline")
                 pesq_original = 4.5
                 stoi_original = 1.0
+                utmos_original = None
         else:
             # No WAV directory provided, use theoretical maximum
             print(f"  ℹ️  No WAV directory provided, using theoretical max as baseline")
             pesq_original = 4.5
             stoi_original = 1.0
+            utmos_original = None
 
-        print(f"  📊 Reconstructed - PESQ: {pesq_value:.3f}, STOI: {stoi_value:.4f}" if pesq_value is not None else "  📊 Reconstructed - PESQ: N/A, STOI: N/A")
-        print(f"  📊 Original Baseline - PESQ: {pesq_original:.3f}, STOI: {stoi_original:.4f}")
+        utmos_str = f", UTMOS: {utmos_value:.4f}" if utmos_value is not None else ""
+        print(f"  📊 Reconstructed - PESQ: {pesq_value:.3f}, STOI: {stoi_value:.4f}{utmos_str}" if pesq_value is not None else "  📊 Reconstructed - PESQ: N/A, STOI: N/A")
+        utmos_orig_str = f", UTMOS: {utmos_original:.4f}" if utmos_original is not None else ""
+        print(f"  📊 Original Baseline - PESQ: {pesq_original:.3f}, STOI: {stoi_original:.4f}{utmos_orig_str}")
 
     # --- 6. NOW normalize and save audio files (AFTER metrics calculation) ---
     # Normalize reconstructed audio for saving
@@ -262,12 +332,12 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
         sf.write(audio_original_path, audio_waveform_orig_normalized, ORIGINAL_SR)
         print(f"  ✅ Original audio saved to: {audio_original_path}")
 
-    return pesq_value, stoi_value, pesq_original, stoi_original
+    return pesq_value, stoi_value, utmos_value, pesq_original, stoi_original, utmos_original
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Analyze a full subset run (generate plots and audio).")
-    
+
     # Path to the *original* spectrograms
     parser.add_argument(
         "-orig_dir", "--original_dir",
@@ -281,6 +351,14 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="(Optional) Path to directory with original .wav files for accurate baseline calculation."
+    )
+
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default='real_imag',
+        choices=['real_imag', 'amp_phase'],
+        help="Spectrogram representation mode: 'real_imag' (Real+Imaginary) or 'amp_phase' (Amplitude+Phase)"
     )
     
     # Path to the *results* of a train_subset run
@@ -324,8 +402,10 @@ if __name__ == "__main__":
         # Collect metrics
         pesq_values = []
         stoi_values = []
+        utmos_values = []
         pesq_original_values = []
         stoi_original_values = []
+        utmos_original_values = []
         file_ids = []
 
         for i, recon_path in enumerate(reconstructed_files, 1):
@@ -337,40 +417,53 @@ if __name__ == "__main__":
                 print(f"  Warning: Original file not found for {file_id}. Skipping.")
                 continue
 
-            pesq_val, stoi_val, pesq_orig, stoi_orig = analyze_file(
-                original_path, recon_path, args.output_dir, args.original_wav_dir
+            pesq_val, stoi_val, utmos_val, pesq_orig, stoi_orig, utmos_orig = analyze_file(
+                original_path, recon_path, args.output_dir, args.original_wav_dir, mode=args.mode
             )
 
             if pesq_val is not None and stoi_val is not None:
                 file_ids.append(file_id)
                 pesq_values.append(pesq_val)
                 stoi_values.append(stoi_val)
+                if utmos_val is not None:
+                    utmos_values.append(utmos_val)
                 if pesq_orig is not None and stoi_orig is not None:
                     pesq_original_values.append(pesq_orig)
                     stoi_original_values.append(stoi_orig)
+                    if utmos_orig is not None:
+                        utmos_original_values.append(utmos_orig)
 
         # Calculate and save summary metrics
         if pesq_values and stoi_values:
             avg_pesq = np.mean(pesq_values)
             avg_stoi = np.mean(stoi_values)
+            avg_utmos = np.mean(utmos_values) if utmos_values else None
             avg_pesq_original = np.mean(pesq_original_values) if pesq_original_values else 4.5
             avg_stoi_original = np.mean(stoi_original_values) if stoi_original_values else 1.0
+            avg_utmos_original = np.mean(utmos_original_values) if utmos_original_values else None
 
             # Save metrics to CSV
             metrics_path = os.path.join(args.output_dir, 'metrics_summary.csv')
             with open(metrics_path, 'w') as f:
-                f.write("file_id,pesq,stoi,pesq_original,stoi_original\n")
+                f.write("file_id,pesq,stoi,utmos,pesq_original,stoi_original,utmos_original\n")
                 for i, fid in enumerate(file_ids):
                     p_orig = pesq_original_values[i] if i < len(pesq_original_values) else avg_pesq_original
                     s_orig = stoi_original_values[i] if i < len(stoi_original_values) else avg_stoi_original
-                    f.write(f"{fid},{pesq_values[i]:.4f},{stoi_values[i]:.4f},{p_orig:.4f},{s_orig:.4f}\n")
-                f.write(f"\nAverage,{avg_pesq:.4f},{avg_stoi:.4f},{avg_pesq_original:.4f},{avg_stoi_original:.4f}\n")
+                    u_val = utmos_values[i] if i < len(utmos_values) else ""
+                    u_orig = utmos_original_values[i] if i < len(utmos_original_values) else ""
+                    f.write(f"{fid},{pesq_values[i]:.4f},{stoi_values[i]:.4f},{u_val},{p_orig:.4f},{s_orig:.4f},{u_orig}\n")
+                utmos_avg_str = f"{avg_utmos:.4f}" if avg_utmos is not None else ""
+                utmos_orig_avg_str = f"{avg_utmos_original:.4f}" if avg_utmos_original is not None else ""
+                f.write(f"\nAverage,{avg_pesq:.4f},{avg_stoi:.4f},{utmos_avg_str},{avg_pesq_original:.4f},{avg_stoi_original:.4f},{utmos_orig_avg_str}\n")
 
             print("\n" + "="*60)
             print("--- Analysis Complete! ---")
-            print(f"📊 Reconstructed - Average PESQ: {avg_pesq:.3f}, Average STOI: {avg_stoi:.4f}")
-            print(f"📊 Original Baseline - Average PESQ: {avg_pesq_original:.3f}, Average STOI: {avg_stoi_original:.4f}")
-            print(f"📊 Quality Gap - PESQ: {avg_pesq_original - avg_pesq:.3f}, STOI: {avg_stoi_original - avg_stoi:.4f}")
+            utmos_str = f", Average UTMOS: {avg_utmos:.3f}" if avg_utmos is not None else ""
+            print(f"📊 Reconstructed - Average PESQ: {avg_pesq:.3f}, Average STOI: {avg_stoi:.4f}{utmos_str}")
+            utmos_orig_str = f", Average UTMOS: {avg_utmos_original:.3f}" if avg_utmos_original is not None else ""
+            print(f"📊 Original Baseline - Average PESQ: {avg_pesq_original:.3f}, Average STOI: {avg_stoi_original:.4f}{utmos_orig_str}")
+            utmos_gap_str = f", UTMOS: {avg_utmos_original - avg_utmos:.3f}" if (avg_utmos is not None and avg_utmos_original is not None) else ""
+            print(f"📊 Quality Gap - PESQ: {avg_pesq_original - avg_pesq:.3f}, STOI: {avg_stoi_original - avg_stoi:.4f}{utmos_gap_str}")
             print(f"Plot files are located in: {os.path.join(args.output_dir, 'plots')}")
             print(f"Audio files are located in: {os.path.join(args.output_dir, 'audio')}")
             print(f"Metrics saved to: {metrics_path}")
