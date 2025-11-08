@@ -92,11 +92,15 @@ def run_training(gps_rate, iterations, dataset_dir, data_name, use_quantization=
         return False
 
 
-def calculate_compression_ratio(checkpoint_dir, original_spectrograms_dir):
+def calculate_compression_ratio(checkpoint_dir, original_wav_dir):
     """
-    Calculate compression ratio by comparing compressed model size to original data size.
+    Calculate compression ratio by comparing compressed model size to ORIGINAL WAV files.
+
+    This is the TRUE end-to-end compression:
+    Original WAV → Gaussian Model (not Spectrogram → Gaussian Model)
     """
     import glob
+    import librosa
 
     # Get model file size (the trained Gaussian parameters)
     model_files = glob.glob(os.path.join(checkpoint_dir, '*/gaussian_model.pth.tar'))
@@ -106,20 +110,21 @@ def calculate_compression_ratio(checkpoint_dir, original_spectrograms_dir):
     # Calculate total size of all model files
     total_model_size = sum(os.path.getsize(f) for f in model_files)
 
-    # Calculate total size of original spectrograms for the same files
-    original_files = glob.glob(os.path.join(original_spectrograms_dir, '*.npy'))
-    # Match only the files that were trained
+    # Calculate total size of ORIGINAL WAV files for the same files
     trained_file_ids = [Path(mf).parent.name for mf in model_files]
     original_size = 0
-    for orig_file in original_files:
-        file_id = Path(orig_file).stem
-        if file_id in trained_file_ids:
-            original_size += os.path.getsize(orig_file)
+
+    for file_id in trained_file_ids:
+        wav_path = os.path.join(original_wav_dir, f"{file_id}.wav")
+        if os.path.exists(wav_path):
+            original_size += os.path.getsize(wav_path)
+        else:
+            print(f"  ⚠️  Warning: WAV file not found for {file_id}")
 
     if original_size == 0:
         return None, None
 
-    # Calculate compression ratio
+    # Calculate compression ratio (original / compressed)
     compression_ratio = original_size / total_model_size
     space_savings = (1 - (total_model_size / original_size)) * 100
 
@@ -413,9 +418,9 @@ def main():
                         avg_pesq_original = 4.5
                         avg_stoi_original = 1.0
 
-                    # Calculate compression ratio
+                    # Calculate compression ratio (comparing to ORIGINAL WAV files, not spectrograms)
                     checkpoint_dir = f"./checkpoints/{DATA_NAME}/GaussianImage_Cholesky_{args.iterations}_{gps_rate}gps"
-                    comp_ratio, space_savings = calculate_compression_ratio(checkpoint_dir, AMP_PHASE_DATASET_DIR)
+                    comp_ratio, space_savings = calculate_compression_ratio(checkpoint_dir, ORIGINAL_WAV_DIR)
 
                     if comp_ratio is None:
                         comp_ratio = 0

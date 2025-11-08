@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # --- Configuration ---
+ORIGINAL_WAV_DIR = "./dataset/LJSpeech-1.1/wavs/"
 DATASET_DIR = "./dataset/ljspeech_spectrograms/"
 DATA_NAME = "focused_quantized_experiments"
 ITERATIONS = 10000  # Higher quality for focused experiments
@@ -25,11 +26,15 @@ ITERATIONS = 10000  # Higher quality for focused experiments
 GAUSSIAN_RATES = [1000, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 8000]
 
 
-def calculate_compression_ratio(checkpoint_dir, original_spectrograms_dir):
+def calculate_compression_ratio(checkpoint_dir, original_wav_dir):
     """
-    Calculate compression ratio by comparing compressed model size to original data size.
+    Calculate compression ratio by comparing compressed model size to ORIGINAL WAV files.
+
+    This is the TRUE end-to-end compression:
+    Original WAV → Gaussian Model (not Spectrogram → Gaussian Model)
     """
     import glob
+    import librosa
 
     # Get model file size (the trained Gaussian parameters)
     model_files = glob.glob(os.path.join(checkpoint_dir, '*/gaussian_model.pth.tar'))
@@ -39,20 +44,21 @@ def calculate_compression_ratio(checkpoint_dir, original_spectrograms_dir):
     # Calculate total size of all model files
     total_model_size = sum(os.path.getsize(f) for f in model_files)
 
-    # Calculate total size of original spectrograms for the same files
-    original_files = glob.glob(os.path.join(original_spectrograms_dir, '*.npy'))
-    # Match only the files that were trained
+    # Calculate total size of ORIGINAL WAV files for the same files
     trained_file_ids = [Path(mf).parent.name for mf in model_files]
     original_size = 0
-    for orig_file in original_files:
-        file_id = Path(orig_file).stem
-        if file_id in trained_file_ids:
-            original_size += os.path.getsize(orig_file)
+
+    for file_id in trained_file_ids:
+        wav_path = os.path.join(original_wav_dir, f"{file_id}.wav")
+        if os.path.exists(wav_path):
+            original_size += os.path.getsize(wav_path)
+        else:
+            print(f"  ⚠️  Warning: WAV file not found for {file_id}")
 
     if original_size == 0:
         return None, None
 
-    # Calculate compression ratio
+    # Calculate compression ratio (original / compressed)
     compression_ratio = original_size / total_model_size
     space_savings = (1 - (total_model_size / original_size)) * 100
 
@@ -336,7 +342,7 @@ def plot_focused_results(comparison_df, experiments_dir):
     print(f"✅ Focused results plot saved to: {plot_file}")
 
 
-def collect_all_metrics(experiments_dir, original_dir):
+def collect_all_metrics(experiments_dir, original_wav_dir):
     """
     Collect metrics from all experiment runs including compression ratios.
     """
@@ -371,9 +377,9 @@ def collect_all_metrics(experiments_dir, original_dir):
                         avg_stoi_original = 1.0
                         avg_utmos_original = None
 
-                    # Calculate compression ratio
+                    # Calculate compression ratio (comparing to ORIGINAL WAV files, not spectrograms)
                     checkpoint_dir = f"./checkpoints/{DATA_NAME}/GaussianImage_Cholesky_{ITERATIONS}_{gps_rate}gps"
-                    comp_ratio, space_savings = calculate_compression_ratio(checkpoint_dir, original_dir)
+                    comp_ratio, space_savings = calculate_compression_ratio(checkpoint_dir, original_wav_dir)
 
                     if comp_ratio is None:
                         comp_ratio = 0
@@ -479,8 +485,8 @@ def main():
             else:
                 print(f"⚠️  Checkpoint directory not found for {gps_rate} gps: {run_dir}")
 
-    # Collect and compare all metrics
-    comparison_df = collect_all_metrics(experiments_dir, DATASET_DIR)
+    # Collect and compare all metrics (using ORIGINAL WAV files for compression calculation)
+    comparison_df = collect_all_metrics(experiments_dir, ORIGINAL_WAV_DIR)
 
     # Create visualization plots
     if comparison_df is not None:
