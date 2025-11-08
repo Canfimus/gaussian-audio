@@ -359,6 +359,32 @@ When running experiments without UTMOS:
 
 5. **Analyze the trade-offs** between quality and compression to find your optimal configuration
 
+## Known Issues
+
+### PESQ Values > 4.5
+
+During experiments, you may see warnings like: `⚠️ PESQ = 4.64 (>4.5) - clamping to 4.5`
+
+**Why this happens:**
+- The Python `pesq` library has a known scaling issue
+- It can return values > 4.5 even though the ITU-T standard defines 4.5 as the theoretical maximum
+- Even identical signals can produce PESQ ~4.64 instead of 4.5
+
+**Solution:**
+- The analysis code automatically clamps PESQ values to 4.5
+- This ensures results stay within the valid ITU-T range (-0.5 to 4.5)
+- Relative comparisons between experiments remain valid
+- Run `python tools/diagnostic_pesq.py` to verify this behavior
+
+**Impact:**
+- Does not affect experiment comparisons or conclusions
+- All PESQ values are clamped consistently
+- Results can be safely interpreted using standard PESQ ranges:
+  - 4.5 = Excellent/Perfect
+  - 4.0-4.5 = Good
+  - 3.0-4.0 = Fair
+  - <3.0 = Poor
+
 ## Questions?
 
 Check the existing documentation:

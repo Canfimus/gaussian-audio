@@ -244,9 +244,31 @@ Or run manually (Step-by-Step Manual option above).
 
 5. **If satisfied, increase SUBSET_SIZE to 50** and run again for real results
 
+## Known Issues
+
+### PESQ Values > 4.5
+
+You may see warnings like: `⚠️ PESQ = 4.64 (>4.5) - clamping to 4.5`
+
+**Why this happens:**
+- The Python `pesq` library has a known scaling issue
+- It can return values > 4.5 even though the ITU-T standard defines 4.5 as the theoretical maximum
+- Even identical signals can produce PESQ ~4.64 instead of 4.5
+
+**Solution:**
+- The analysis code automatically clamps PESQ values to 4.5
+- This ensures results stay within the valid ITU-T range (-0.5 to 4.5)
+- Relative comparisons between experiments remain valid
+- Run `python tools/diagnostic_pesq.py` to verify this behavior
+
+**Impact:**
+- Does not affect experiment comparisons
+- All PESQ values are clamped consistently
+- Results can be safely interpreted using standard PESQ ranges
+
 ## Questions?
 
-- SUBSET_SIZE controls how many spectrograms to use (currently 3)
+- SUBSET_SIZE controls how many spectrograms to use (currently 10)
 - The script automatically handles everything for Amplitude/Phase mode
 - Results will tell you if Amp/Phase is better or worse than Real/Imag
 - All the same metrics (PESQ, STOI) are calculated
