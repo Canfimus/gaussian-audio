@@ -21,8 +21,8 @@ DATASET_DIR = "./dataset/ljspeech_spectrograms/"
 DATA_NAME = "focused_quantized_experiments"
 ITERATIONS = 10000  # Higher quality for focused experiments
 
-# Focused gaussian rates in the sweet spot (more granular)
-GAUSSIAN_RATES = [2000, 2500, 3000, 3500, 4000, 4500, 5000]
+# Gaussian rates from very low to very high (including extremes)
+GAUSSIAN_RATES = [1000, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 8000]
 
 
 def calculate_compression_ratio(checkpoint_dir, original_spectrograms_dir):

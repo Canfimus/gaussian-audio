@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from src.utils import * # Import from reorganized src directory
 
 # Define the number of files for our subset
-SUBSET_SIZE = 3  # Using 3 for debugging
+SUBSET_SIZE = 10  # Using 10 spectrograms for experiments
 
 class SimpleTrainer2d:
     """Trains random 2d gaussians to fit a single spectrogram."""

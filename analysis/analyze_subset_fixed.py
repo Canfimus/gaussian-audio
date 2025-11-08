@@ -111,9 +111,23 @@ def calculate_original_baseline(original_audio_path, original_spec_path, mode='r
         # PESQ: pesq(sample_rate, reference=original_wav, degraded=spec_reconstruction, mode)
         pesq_baseline = pesq(16000, audio_orig_16k, audio_spec_16k, 'wb')
 
+        # DIAGNOSTIC: Check for impossible PESQ values
+        if pesq_baseline > 4.5:
+            print(f"  ⚠️  WARNING: PESQ baseline = {pesq_baseline:.4f} (>4.5)!")
+            print(f"     This should be impossible. PESQ max is 4.5.")
+            print(f"     Signal stats: orig mean={np.mean(np.abs(audio_orig_16k)):.6f}, spec mean={np.mean(np.abs(audio_spec_16k)):.6f}")
+            print(f"     Clamping to 4.5...")
+            pesq_baseline = 4.5
+
         # Calculate STOI
         # STOI: stoi(clean_reference=original_wav, degraded=spec_reconstruction, sample_rate, extended)
         stoi_baseline = stoi(audio_original_wav, audio_from_spec, sr_orig, extended=False)
+
+        # DIAGNOSTIC: Check for impossible STOI values
+        if stoi_baseline > 1.0:
+            print(f"  ⚠️  WARNING: STOI baseline = {stoi_baseline:.4f} (>1.0)!")
+            print(f"     Clamping to 1.0...")
+            stoi_baseline = 1.0
 
         # Calculate UTMOS if available
         utmos_baseline = None
@@ -252,6 +266,11 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
             # PESQ: pesq(sample_rate, reference, degraded, mode)
             # reference = original, degraded = reconstructed
             pesq_value = pesq(16000, audio_orig_16k, audio_recon_16k, 'wb')
+
+            # DIAGNOSTIC: Check for impossible PESQ values
+            if pesq_value > 4.5:
+                print(f"  ⚠️  WARNING: PESQ = {pesq_value:.4f} (>4.5)! Clamping to 4.5...")
+                pesq_value = 4.5
         except Exception as e:
             print(f"  Warning: PESQ calculation failed: {e}")
             pesq_value = None
@@ -261,6 +280,11 @@ def analyze_file(original_path, reconstructed_path, base_output_path, original_w
             # STOI: stoi(clean_reference, degraded, sample_rate, extended)
             # clean_reference = original, degraded = reconstructed
             stoi_value = stoi(audio_waveform_orig_trimmed, audio_waveform_trimmed, ORIGINAL_SR, extended=False)
+
+            # DIAGNOSTIC: Check for impossible STOI values
+            if stoi_value > 1.0:
+                print(f"  ⚠️  WARNING: STOI = {stoi_value:.4f} (>1.0)! Clamping to 1.0...")
+                stoi_value = 1.0
         except Exception as e:
             print(f"  Warning: STOI calculation failed: {e}")
             stoi_value = None
