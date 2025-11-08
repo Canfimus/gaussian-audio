@@ -1,12 +1,12 @@
 from gsplat.project_gaussians import project_gaussians
 from gsplat.rasterize import rasterize_gaussians
 from gsplat.sh import num_sh_bases, spherical_harmonics
-from utils import *
+from ..utils import *
 import torch
 import torch.nn as nn
 import numpy as np
 import math
-from optimizer import Adan
+from ..optimizer import Adan
 
 def random_quat_tensor(N):
     """

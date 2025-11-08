@@ -1,13 +1,13 @@
 from gsplat.project_gaussians_2d_scale_rot import project_gaussians_2d_scale_rot
 from gsplat.rasterize_sum import rasterize_gaussians_sum
 from pytorch_msssim import SSIM
-from utils import *
+from ..utils import *
 import torch
 import torch.nn as nn
 import numpy as np
 import math
-from quantize import *
-from optimizer import Adan
+from ..quantize import *
+from ..optimizer import Adan
 
 class GaussianImage_RS(nn.Module):
     def __init__(self, loss_type="L2", **kwargs):
