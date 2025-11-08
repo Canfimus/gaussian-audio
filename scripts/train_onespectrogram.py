@@ -9,11 +9,11 @@ import sys
 import os
 import torch.nn.functional as F
 from pytorch_msssim import ms_ssim
-# Add parent directory to path to import from src
+# Add parent directory to path so we can import from root
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.join(script_dir, '..')
 sys.path.insert(0, os.path.abspath(parent_dir))
-from src.utils import * # Import from reorganized src directory
+from utils import *
 from tqdm import tqdm
 import random
 import torchvision.transforms as transforms
@@ -49,7 +49,7 @@ class SimpleTrainer2d:
         
         if model_name == "GaussianImage_Cholesky":
             # ייבוא המודל הדו-ערוצי שלנו
-            from src.models.gaussianimage_audio_v2 import GaussianImage_Cholesky 
+            from gaussianimage_audio_v2 import GaussianImage_Cholesky 
             self.gaussian_model = GaussianImage_Cholesky(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W, 
                 device=self.device, lr=args.lr, quantize=False).to(self.device)
         else:

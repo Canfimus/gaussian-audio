@@ -10,11 +10,11 @@ import os
 from PIL import Image
 import torch.nn.functional as F
 from pytorch_msssim import ms_ssim
-# Add parent directory to path to import from src
+# Add parent directory to path so we can import from root
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.join(script_dir, '..', '..')
 sys.path.insert(0, os.path.abspath(parent_dir))
-from src.utils import * # Import from reorganized src directory
+from utils import *
 from tqdm import tqdm
 import random
 import copy
@@ -43,12 +43,12 @@ class SimpleTrainer2d:
         self.save_imgs = args.save_imgs
 
         if model_name == "GaussianImage_Cholesky":
-            from src.models.gaussianimage_cholesky import GaussianImage_Cholesky
-            self.gaussian_model = GaussianImage_Cholesky(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W, 
+            from gaussianimage_cholesky import GaussianImage_Cholesky
+            self.gaussian_model = GaussianImage_Cholesky(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W,
                 device=self.device, lr=args.lr, quantize=True).to(self.device)
-            
+
         elif model_name == "GaussianImage_RS":
-            from src.models.gaussianimage_rs import GaussianImage_RS
+            from gaussianimage_rs import GaussianImage_RS
             self.gaussian_model = GaussianImage_RS(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W, 
                 device=self.device, lr=args.lr, quantize=True).to(self.device)
 

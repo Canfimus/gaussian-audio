@@ -1,12 +1,12 @@
 from gsplat.project_gaussians_2d import project_gaussians_2d
 from gsplat.rasterize_sum import rasterize_gaussians_sum
-from ..utils import *
+from utils import *
 import torch
 import torch.nn as nn
 import numpy as np
 import math
-from ..quantize import *
-from ..optimizer import Adan
+from quantize import *
+from optimizer import Adan
 
 class GaussianImage_Cholesky(nn.Module):
     def __init__(self, loss_type="L2", **kwargs):

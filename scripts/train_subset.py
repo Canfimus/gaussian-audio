@@ -14,11 +14,11 @@ import torchvision.transforms as transforms
 import glob # Needed to find .npy files
 from tqdm import tqdm
 
-# Add parent directory to path to import from src
+# Add parent directory to path so we can import from root
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.join(script_dir, '..')
 sys.path.insert(0, os.path.abspath(parent_dir))
-from src.utils import * # Import from reorganized src directory
+from utils import *
 
 # Define the number of files for our subset
 SUBSET_SIZE = 10  # Using 10 spectrograms for experiments
@@ -55,7 +55,7 @@ class SimpleTrainer2d:
         
         if model_name == "GaussianImage_Cholesky":
             # Import our 3-channel (fixed) model
-            from src.models.gaussianimage_audio_v2 import GaussianImage_Cholesky
+            from gaussianimage_audio_v2 import GaussianImage_Cholesky
             # Check if quantization is enabled
             use_quantize = args.quantize if hasattr(args, 'quantize') else False
             self.gaussian_model = GaussianImage_Cholesky(loss_type="L2", opt_type="adan", num_points=self.num_points, H=self.H, W=self.W, BLOCK_H=BLOCK_H, BLOCK_W=BLOCK_W,

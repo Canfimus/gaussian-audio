@@ -1,12 +1,12 @@
 from gsplat.project_gaussians_2d import project_gaussians_2d
 from gsplat.rasterize_sum import rasterize_gaussians_sum
-from ..utils import *
+from utils import *
 import torch
 import torch.nn as nn
 import numpy as np
 import math
-from ..quantize import *
-from ..optimizer import Adan
+from quantize import *
+from optimizer import Adan
 
 class GaussianImage_Cholesky(nn.Module):
     def __init__(self, loss_type="L2", **kwargs):
@@ -19,25 +19,27 @@ class GaussianImage_Cholesky(nn.Module):
             (self.W + self.BLOCK_W - 1) // self.BLOCK_W,
             (self.H + self.BLOCK_H - 1) // self.BLOCK_H,
             1,
-        )
+        ) # 
         self.device = kwargs["device"]
+        self.feature_dim = 3 # <-- CUDA FIX: Set back to 3 to satisfy the C++ kernel
+        self.true_feature_dim = 2 # <-- CUDA FIX: We'll use this to know how to slice
 
         self._xyz = nn.Parameter(torch.atanh(2 * (torch.rand(self.init_num_points, 2) - 0.5)))
-        self._cholesky = nn.Parameter(torch.rand(self.init_num_points, 3))  # Keep as 3 (Cholesky factorization)
+        self._cholesky = nn.Parameter(torch.rand(self.init_num_points, 3))
         self.register_buffer('_opacity', torch.ones((self.init_num_points, 1)))
-        self._features_dc = nn.Parameter(torch.rand(self.init_num_points, 2))  # CHANGED: 3→2 for amplitude+phase
+        self._features_dc = nn.Parameter(torch.rand(self.init_num_points, self.feature_dim)) # <-- CUDA FIX: This is now [N, 3]
         self.last_size = (self.H, self.W)
         self.quantize = kwargs["quantize"]
-        self.register_buffer('background', torch.ones(2))  # CHANGED: 3→2 for amplitude+phase
+        self.register_buffer('background', torch.ones(self.feature_dim)) # <-- CUDA FIX: This is now [3]
         self.opacity_activation = torch.sigmoid
-        self.rgb_activation = torch.sigmoid
+        self.rgb_activation = nn.Identity() # This is correct, no sigmoid for spectrograms
         self.register_buffer('bound', torch.tensor([0.5, 0.5]).view(1, 2))
-        self.register_buffer('cholesky_bound', torch.tensor([0.5, 0, 0.5]).view(1, 3))  # Keep as 3 (Cholesky)
+        self.register_buffer('cholesky_bound', torch.tensor([0.5, 0, 0.5]).view(1, 3))
 
         if self.quantize:
             self.xyz_quantizer = FakeQuantizationHalf.apply 
-            self.features_dc_quantizer = VectorQuantizer(codebook_dim=2, codebook_size=8, num_quantizers=2, vector_type="vector", kmeans_iters=5)  # CHANGED: 3→2
-            self.cholesky_quantizer = UniformQuantizer(signed=False, bits=6, learned=True, num_channels=3)  # Keep as 3
+            self.features_dc_quantizer = VectorQuantizer(codebook_dim=self.feature_dim, codebook_size=8, num_quantizers=2, vector_type="vector", kmeans_iters=5) # <-- CUDA FIX: codebook_dim is 3
+            self.cholesky_quantizer = UniformQuantizer(signed=False, bits=6, learned=True, num_channels=3)
 
         if kwargs["opt_type"] == "adam":
             self.optimizer = torch.optim.Adam(self.parameters(), lr=kwargs["lr"])
@@ -68,17 +70,28 @@ class GaussianImage_Cholesky(nn.Module):
         self.xys, depths, self.radii, conics, num_tiles_hit = project_gaussians_2d(self.get_xyz, self.get_cholesky_elements, self.H, self.W, self.tile_bounds)
         out_img = rasterize_gaussians_sum(self.xys, depths, self.radii, conics, num_tiles_hit,
                 self.get_features, self._opacity, self.H, self.W, self.BLOCK_H, self.BLOCK_W, background=self.background, return_alpha=False)
-        out_img = torch.clamp(out_img, 0, 1)
-        out_img = out_img.view(-1, self.H, self.W, 2).permute(0, 3, 1, 2).contiguous()  # CHANGED: 3→2
+        # out_img = torch.clamp(out_img, 0, 1) # Correctly commented out
+        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # <-- CUDA FIX: This now outputs [1, 3, H, W]
         return {"render": out_img}
 
     def train_iter(self, gt_image):
+        # gt_image is [1, 2, H, W] (our real data)
         render_pkg = self.forward()
-        image = render_pkg["render"]
-        loss = loss_fn(image, gt_image, self.loss_type, lambda_value=0.7)
-        loss.backward()
+        image = render_pkg["render"] # This is [1, 3, H, W] (from our 3-channel model)
+
+        # --- CUDA FIX: Slice the rendered image to match the ground truth ---
+        # We only calculate loss on the first 2 channels.
+        image_sliced = image[:, :self.true_feature_dim, :, :] # This is now [1, 2, H, W]
+        # --- END OF FIX ---
+
+        # Now we compare the [1, 2, H, W] slice to the [1, 2, H, W] ground truth
+        loss = loss_fn(image_sliced, gt_image, self.loss_type, lambda_value=0.7)
+        
+        loss.backward() # This will now work. The gradients for the 3rd channel will be zero.
+        
         with torch.no_grad():
-            mse_loss = F.mse_loss(image, gt_image)
+            # Also use the sliced image for PSNR calculation
+            mse_loss = F.mse_loss(image_sliced, gt_image)
             psnr = 10 * math.log10(1.0 / mse_loss.item())
         self.optimizer.step()
         self.optimizer.zero_grad(set_to_none = True)
@@ -96,18 +109,23 @@ class GaussianImage_Cholesky(nn.Module):
         self.xys, depths, self.radii, conics, num_tiles_hit = project_gaussians_2d(means, cholesky_elements, self.H, self.W, self.tile_bounds)
         out_img = rasterize_gaussians_sum(self.xys, depths, self.radii, conics, num_tiles_hit,
                 colors, self._opacity, self.H, self.W, self.BLOCK_H, self.BLOCK_W, background=self.background, return_alpha=False)
-        out_img = torch.clamp(out_img, 0, 1)
-        out_img = out_img.view(-1, self.H, self.W, 2).permute(0, 3, 1, 2).contiguous()  # CHANGED: 3→2
+        # out_img = torch.clamp(out_img, 0, 1)
+        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # This is [1, 3, H, W]
         vq_loss = l_vqm + l_vqs + l_vqr + l_vqc
         return {"render": out_img, "vq_loss": vq_loss, "unit_bit":[m_bit, s_bit, r_bit, c_bit]}
 
     def train_iter_quantize(self, gt_image):
         render_pkg = self.forward_quantize()
-        image = render_pkg["render"]
-        loss = loss_fn(image, gt_image, self.loss_type, lambda_value=0.7) + render_pkg["vq_loss"]
+        image = render_pkg["render"] # This is [1, 3, H, W]
+
+        # --- CUDA FIX: Slice the rendered image ---
+        image_sliced = image[:, :self.true_feature_dim, :, :] # Slice to [1, 2, H, W]
+        # --- END OF FIX ---
+
+        loss = loss_fn(image_sliced, gt_image, self.loss_type, lambda_value=0.7) + render_pkg["vq_loss"]
         loss.backward()
         with torch.no_grad():
-            mse_loss = F.mse_loss(image, gt_image)
+            mse_loss = F.mse_loss(image_sliced, gt_image)
             psnr = 10 * math.log10(1.0 / mse_loss.item())
         self.optimizer.step()
         self.optimizer.zero_grad(set_to_none=True)
@@ -130,56 +148,9 @@ class GaussianImage_Cholesky(nn.Module):
         self.xys, depths, self.radii, conics, num_tiles_hit = project_gaussians_2d(means, cholesky_elements, self.H, self.W, self.tile_bounds)
         out_img = rasterize_gaussians_sum(self.xys, depths, self.radii, conics, num_tiles_hit,
                 colors, self._opacity, self.H, self.W, self.BLOCK_H, self.BLOCK_W, background=self.background, return_alpha=False)
-        out_img = torch.clamp(out_img, 0, 1)
-        out_img = out_img.view(-1, self.H, self.W, 2).permute(0, 3, 1, 2).contiguous()  # CHANGED: 3→2
+        # out_img = torch.clamp(out_img, 0, 1)
+        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # This is [1, 3, H, W]
         return {"render":out_img}
-
-    def analysis_wo_ec(self, encoding_dict):
-        quant_cholesky_elements, feature_dc_index = encoding_dict["quant_cholesky_elements"], encoding_dict["feature_dc_index"]
-        total_bits = 0
-        initial_bits, codebook_bits = 0, 0
-        for quantizer_index, layer in enumerate(self.features_dc_quantizer.quantizer.layers):
-            codebook_bits += layer._codebook.embed.numel()*torch.finfo(layer._codebook.embed.dtype).bits
-        initial_bits += self.cholesky_quantizer.scale.numel()*torch.finfo(self.cholesky_quantizer.scale.dtype).bits
-        initial_bits += self.cholesky_quantizer.beta.numel()*torch.finfo(self.cholesky_quantizer.beta.dtype).bits
-        initial_bits += codebook_bits
-
-        total_bits += initial_bits
-        total_bits += self._xyz.numel()*16
-
-        feature_dc_index = feature_dc_index.int().cpu().numpy()
-        index_max = np.max(feature_dc_index)
-        max_bit = np.ceil(np.log2(index_max))
-        total_bits += feature_dc_index.size * max_bit
-        
-        quant_cholesky_elements = quant_cholesky_elements.cpu().numpy()
-        total_bits += quant_cholesky_elements.size * 6
-
-        position_bits = self._xyz.numel()*16
-        cholesky_bits, feature_dc_bits = 0, 0
-        cholesky_bits += self.cholesky_quantizer.scale.numel()*torch.finfo(self.cholesky_quantizer.scale.dtype).bits
-        cholesky_bits += self.cholesky_quantizer.beta.numel()*torch.finfo(self.cholesky_quantizer.beta.dtype).bits
-        cholesky_bits += quant_cholesky_elements.size * 6
-        feature_dc_bits += codebook_bits
-        feature_dc_bits += feature_dc_index.size * max_bit
-
-        bpp = total_bits/self.H/self.W
-        position_bpp = position_bits/self.H/self.W
-        cholesky_bpp = cholesky_bits/self.H/self.W
-        feature_dc_bpp = feature_dc_bits/self.H/self.W
-        return {"bpp": bpp, "position_bpp": position_bpp, 
-            "cholesky_bpp": cholesky_bpp, "feature_dc_bpp": feature_dc_bpp}
-
-    def compress(self):
-        means = torch.tanh(self.xyz_quantizer(self._xyz))
-        quant_cholesky_elements, cholesky_elements = self.cholesky_quantizer.compress(self._cholesky)
-        cholesky_elements = cholesky_elements + self.cholesky_bound
-        colors, feature_dc_index = self.features_dc_quantizer.compress(self.get_features)
-        cholesky_compressed, cholesky_histogram_table, cholesky_unique = compress_matrix_flatten_categorical(quant_cholesky_elements.int().flatten().tolist())
-        feature_dc_compressed, feature_dc_histogram_table, feature_dc_unique = compress_matrix_flatten_categorical(feature_dc_index.int().flatten().tolist())
-        return {"xyz":self._xyz.half(), "feature_dc_index": feature_dc_index, "quant_cholesky_elements": quant_cholesky_elements, 
-            "feature_dc_bitstream":[feature_dc_compressed, feature_dc_histogram_table, feature_dc_unique], 
-            "cholesky_bitstream":[cholesky_compressed, cholesky_histogram_table, cholesky_unique]}
 
     def decompress(self, encoding_dict):
         xyz = encoding_dict["xyz"]
@@ -188,8 +159,8 @@ class GaussianImage_Cholesky(nn.Module):
         cholesky_compressed, cholesky_histogram_table, cholesky_unique = encoding_dict["cholesky_bitstream"]
         feature_dc_index = decompress_matrix_flatten_categorical(feature_dc_compressed, feature_dc_histogram_table, feature_dc_unique, num_points*2, (num_points, 2))
         quant_cholesky_elements = decompress_matrix_flatten_categorical(cholesky_compressed, cholesky_histogram_table, cholesky_unique, num_points*3, (num_points, 3))
-        feature_dc_index = torch.from_numpy(feature_dc_index).to(device).int()
-        quant_cholesky_elements = torch.from_numpy(quant_cholesky_elements).to(device).float()
+        feature_dc_index = torch.from_numpy(feature_dc_index).to(device).int() #[800, 2]
+        quant_cholesky_elements = torch.from_numpy(quant_cholesky_elements).to(device).float() #[800, 3]
 
         means = torch.tanh(xyz.float())
         cholesky_elements = self.cholesky_quantizer.decompress(quant_cholesky_elements)
@@ -198,8 +169,8 @@ class GaussianImage_Cholesky(nn.Module):
         self.xys, depths, self.radii, conics, num_tiles_hit = project_gaussians_2d(means, cholesky_elements, self.H, self.W, self.tile_bounds)
         out_img = rasterize_gaussians_sum(self.xys, depths, self.radii, conics, num_tiles_hit,
                 colors, self._opacity, self.H, self.W, self.BLOCK_H, self.BLOCK_W, background=self.background, return_alpha=False)
-        out_img = torch.clamp(out_img, 0, 1)
-        out_img = out_img.view(-1, self.H, self.W, 2).permute(0, 3, 1, 2).contiguous()  # CHANGED: 3→2
+        # out_img = torch.clamp(out_img, 0, 1)
+        out_img = out_img.view(-1, self.H, self.W, self.feature_dim).permute(0, 3, 1, 2).contiguous() # This is [1, 3, H, W]
         return {"render":out_img}
    
     def analysis(self, encoding_dict):
