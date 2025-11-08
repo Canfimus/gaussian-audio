@@ -13,17 +13,17 @@ This guide explains how to run experiments with the updated features including U
 
 ### 1. Install Dependencies
 
-First, install the new requirements including UTMOS support:
+First, install the required dependencies:
 
 ```bash
 pip install -r requirements_experiments.txt
 ```
 
-**Important:** The `speechmetrics` library may take a few minutes to install as it downloads pretrained models.
+**Note about UTMOS:** UTMOS is optional and not included in the basic requirements. The experiments will run fine without it, using PESQ and STOI metrics. If you want to add UTMOS later, see the [UTMOS Installation](#utmos-installation-optional) section below.
 
 ### 2. Run the Focused Experiment (Recommended)
 
-The focused experiment tests the 2000-5000 gps range with quantization enabled and includes UTMOS metrics:
+The focused experiment tests the 2000-5000 gps range with quantization enabled:
 
 ```bash
 python run_focused_experiment.py --iterations 10000
@@ -31,11 +31,11 @@ python run_focused_experiment.py --iterations 10000
 
 This will:
 - Train models at 7 different Gaussian rates (2000, 2500, 3000, 3500, 4000, 4500, 5000 gps)
-- Analyze results and calculate PESQ, STOI, and UTMOS metrics
+- Analyze results and calculate PESQ and STOI metrics (plus UTMOS if installed)
 - Generate comprehensive comparison plots
 - Calculate compression ratios
 
-**Note:** With UTMOS enabled, analysis will take longer (expect 2-3x processing time).
+**Note:** If UTMOS is not installed, you'll see a warning but experiments will continue normally with PESQ and STOI.
 
 ### 3. Check Results
 
@@ -46,7 +46,7 @@ Results will be saved to `./experiments/focused_quantized_experiments/`:
 
 ## New Features
 
-### UTMOS Metric
+### UTMOS Metric (Optional)
 
 **What is UTMOS?**
 - Universal Text-free Model for Objective Speech Quality Assessment
@@ -54,6 +54,12 @@ Results will be saved to `./experiments/focused_quantized_experiments/`:
 - Trained on large-scale MOS (Mean Opinion Score) data
 - Range: typically 1.0-5.0 (higher is better)
 - Better correlates with human perception than traditional metrics
+
+**⚠️ UTMOS is OPTIONAL:**
+- The experiments work perfectly fine with just PESQ and STOI
+- UTMOS adds extra quality assessment but isn't required
+- If UTMOS is not installed, the code automatically skips it
+- See [UTMOS Installation](#utmos-installation-optional) section for manual installation
 
 **When to use:**
 - For speech/voice audio quality assessment
@@ -233,13 +239,15 @@ GAUSSIAN_RATES = [2000, 2500, 3000, 3500, 4000, 4500, 5000]
 GAUSSIAN_RATES = [1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000]
 ```
 
-### Without UTMOS (Faster)
+### Running Without UTMOS (Default/Recommended)
 
-If you don't need UTMOS and want faster analysis:
+**By default, experiments run without UTMOS** since it's not in the requirements:
 
-1. Don't install `speechmetrics`
-2. The code will automatically skip UTMOS and show a warning
-3. Analysis will be ~2-3x faster
+1. Just install the standard requirements: `pip install -r requirements_experiments.txt`
+2. Run experiments normally
+3. The code will automatically skip UTMOS and show a one-time warning
+4. Analysis uses PESQ and STOI (industry-standard metrics)
+5. Results are still fully valid and comprehensive
 
 ### Subset Size
 
@@ -253,18 +261,58 @@ SUBSET_SIZE = 3  # Change this (currently 3 for debugging)
 SUBSET_SIZE = 50
 ```
 
+## UTMOS Installation (Optional)
+
+**IMPORTANT: You don't need UTMOS to run experiments!** The system works perfectly with PESQ and STOI.
+
+If you want to add UTMOS later, here are some options:
+
+### Option 1: Skip UTMOS (Recommended for Now)
+
+Just run the experiments without UTMOS:
+- Install dependencies: `pip install -r requirements_experiments.txt`
+- Run experiments normally
+- You'll see a warning that UTMOS is not available (this is fine)
+- Results will show PESQ and STOI only
+
+### Option 2: Try Alternative UTMOS Installation (Advanced)
+
+There are several UTMOS implementations. You can try:
+
+```bash
+# Option A: Try installing from a specific source
+pip install git+https://github.com/tarepan/SpeechMOS.git
+
+# Option B: Try a different package name
+pip install speechmos
+
+# Option C: Install from a research repository
+# (Check GitHub for "UTMOS" implementations)
+```
+
+**Note:** These may or may not work depending on your system. If installation fails, don't worry - just use PESQ and STOI.
+
+### What You'll See Without UTMOS
+
+When running experiments without UTMOS:
+- ✅ PESQ and STOI metrics work perfectly
+- ✅ All plots are generated (without UTMOS panels)
+- ✅ CSV output includes empty UTMOS columns
+- ⚠️ You'll see: "Warning: speechmetrics not available. UTMOS metric will not be calculated."
+- ✅ Everything else works normally
+
 ## Troubleshooting
 
 ### UTMOS Issues
 
-**Problem:** `speechmetrics` installation fails or takes too long
+**Problem:** Cannot install UTMOS / speechmetrics
 
 **Solution:**
-- The package downloads large pretrained models (may take 5-10 minutes)
-- Ensure stable internet connection
-- If it fails, you can skip UTMOS - other metrics will still work
+- **This is fine!** Just run without UTMOS
+- PESQ and STOI are industry-standard metrics
+- The experiments are designed to work without UTMOS
 
-**Problem:** UTMOS calculation is very slow
+**Problem:** UTMOS calculation is very slow (if you installed it)
 
 **Solution:**
 - This is normal - UTMOS uses a neural network
@@ -291,16 +339,25 @@ SUBSET_SIZE = 50
 
 ## Next Steps
 
-1. **Start with the focused experiment:**
+1. **Install dependencies (UTMOS is optional and not required):**
+   ```bash
+   pip install -r requirements_experiments.txt
+   ```
+
+2. **Start with the focused experiment:**
    ```bash
    python run_focused_experiment.py --iterations 10000
    ```
 
-2. **Check the results** in `./experiments/focused_quantized_experiments/`
+   You'll see a warning about UTMOS not being available - **this is normal and fine!**
 
-3. **Try Amplitude/Phase mode** if you want to experiment with different representations
+3. **Check the results** in `./experiments/focused_quantized_experiments/`
+   - Plots will show PESQ and STOI metrics
+   - CSV files will have empty UTMOS columns
 
-4. **Analyze the trade-offs** between quality and compression to find your optimal configuration
+4. **Try Amplitude/Phase mode** if you want to experiment with different representations
+
+5. **Analyze the trade-offs** between quality and compression to find your optimal configuration
 
 ## Questions?
 
