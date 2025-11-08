@@ -15,7 +15,9 @@ import glob # Needed to find .npy files
 from tqdm import tqdm
 
 # Add parent directory to path to import from src
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.join(script_dir, '..')
+sys.path.insert(0, os.path.abspath(parent_dir))
 from src.utils import * # Import from reorganized src directory
 
 # Define the number of files for our subset
